@@ -94,6 +94,65 @@ namespace ShaderGen
             return sb.ToString();
         }
 
+        private static INamedTypeSymbol FindTypeByMetadataName(IModuleSymbol module, string metadataName)
+        {
+            var components = metadataName.Split('.');
+            INamespaceSymbol ns = module.GlobalNamespace;
+            List<string> unmatched = new List<string>();
+            for (int i = 0; i < components.Length - 1; ++i)
+            {
+                unmatched.Add(components[i]);
+                string search = String.Join(".", unmatched);
+                var child = ns.GetNamespaceMembers().FirstOrDefault(n => n.Name == search);
+                if (child != null)
+                {
+                    ns = child;
+                    unmatched.Clear();
+                }
+            }
+            return ns.GetMembers(components.Last()).OfType<INamedTypeSymbol>().FirstOrDefault();
+        }
+
+        public static INamedTypeSymbol FindTypeByMetadataName(this Compilation compilation, string metadataName)
+        {
+            var typeSymbol = compilation.GetTypeByMetadataName(metadataName);
+            if (typeSymbol != null)
+            {
+                return typeSymbol;
+            }
+            typeSymbol = compilation.Assembly.GetTypeByMetadataName(metadataName);
+            if (typeSymbol != null)
+            {
+                return typeSymbol;
+            }
+            foreach (var assembly in compilation.References.Select(compilation.GetAssemblyOrModuleSymbol).OfType<IAssemblySymbol>())
+            {
+                if (null != (typeSymbol = assembly.GetTypeByMetadataName(metadataName)))
+                {
+                    return typeSymbol;
+                }
+            }
+            foreach (var symbol in compilation.References.Select(compilation.GetAssemblyOrModuleSymbol))
+            {
+                if (!(symbol is IModuleSymbol module))
+                {
+                    if (symbol is IAssemblySymbol assembly)
+                    {
+                        module = assembly.Modules.Single();
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+                if (null != (typeSymbol = FindTypeByMetadataName(module, metadataName)))
+                {
+                    return typeSymbol;
+                }
+            }
+            return null;
+        }
+
         private static bool IsRootNamespace(ISymbol symbol)
         {
             INamespaceSymbol s = null;

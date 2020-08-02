@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 
 namespace ShaderGen
 {
@@ -17,13 +18,9 @@ namespace ShaderGen
                 typeAndMethodName = default(TypeAndMethodName);
                 return false;
             }
-            string typeName = parts[0];
-            for (int i = 1; i < parts.Length - 1; i++)
-            {
-                typeName += "." + parts[i];
-            }
+            string typeName = String.Join(".", parts.Take(parts.Length - 1));
 
-            typeAndMethodName = new TypeAndMethodName { TypeName = typeName, MethodName = parts[parts.Length - 1] };
+            typeAndMethodName = new TypeAndMethodName { TypeName = typeName, MethodName = parts.Last() };
             return true;
         }
 

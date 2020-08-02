@@ -359,22 +359,92 @@ namespace ShaderGen
             return CorrectIdentifier(mapped);
         }
 
+        private FieldDefinition ReflectField(IFieldSymbol field)
+        {
+            AlignmentInfo fieldSizeAndAlignment;
+            if (field.Type.Kind == SymbolKind.ArrayType)
+            {
+                throw new NotSupportedException();
+            }
+            else
+            {
+                fieldSizeAndAlignment = TypeSizeCache.Get(field.Type);
+            }
+
+            SemanticType semantic = SemanticType.None;
+            var semanticAttribute = field.GetAttributes().SingleOrDefault(a => a.AttributeClass.Name.Contains("Semantic"));
+            if (semanticAttribute != null)
+            {
+                switch (semanticAttribute.AttributeClass.Name)
+                {
+                    case nameof(PositionSemanticAttribute):
+                        semantic = SemanticType.Position;
+                        break;
+                    case nameof(SystemPositionSemanticAttribute):
+                        semantic = SemanticType.SystemPosition;
+                        break;
+                    case nameof(ColorSemanticAttribute):
+                        semantic = SemanticType.Color;
+                        break;
+                    case nameof(ColorTargetSemanticAttribute):
+                        semantic = SemanticType.ColorTarget;
+                        break;
+                    case nameof(NormalSemanticAttribute):
+                        semantic = SemanticType.Normal;
+                        break;
+                    case nameof(TangentSemanticAttribute):
+                        semantic = SemanticType.Tangent;
+                        break;
+                    case nameof(TextureCoordinateSemanticAttribute):
+                        semantic = SemanticType.TextureCoordinate;
+                        break;
+                    default:
+                        throw new NotSupportedException();
+                }
+            }
+
+            return new FieldDefinition(field.Name, new TypeReference(field.Type.GetFullMetadataName(), field.Type), semantic, 0, fieldSizeAndAlignment);
+        }
+
+        private bool TryReflectStructure(string setName, INamedTypeSymbol name, out StructureDefinition sd)
+        {
+            if (name.TypeKind == TypeKind.Struct)
+            {
+                var fields = name.GetMembers().OfType<IFieldSymbol>().Select(ReflectField).ToArray();
+                sd = new StructureDefinition(name.GetFullMetadataName(), fields, TypeSizeCache.Get(name));
+                return true;
+            }
+            sd = null;
+            return false;
+        }
+
         protected bool TryDiscoverStructure(string setName, string name, out StructureDefinition sd)
         {
-            INamedTypeSymbol type = Compilation.GetTypeByMetadataName(name);
-            if (type == null || type.OriginalDefinition.DeclaringSyntaxReferences.Length == 0)
+            INamedTypeSymbol type = Compilation.FindTypeByMetadataName(name);
+            if (type == null)
             {
                 sd = null;
                 return false;
                 // throw new ShaderGenerationException("Unable to obtain compilation type metadata for " + name);
             }
-            SyntaxNode declaringSyntax = type.OriginalDefinition.DeclaringSyntaxReferences[0].GetSyntax();
-            if (declaringSyntax is StructDeclarationSyntax sds)
+            else if (type.OriginalDefinition.DeclaringSyntaxReferences.Length == 0)
             {
-                if (ShaderSyntaxWalker.TryGetStructDefinition(Compilation.GetSemanticModel(sds.SyntaxTree), sds, out sd))
+                if (TryReflectStructure(setName, type, out sd))
                 {
                     AddStructure(setName, sd);
                     return true;
+                }
+            }
+            else
+            {
+                SyntaxNode declaringSyntax = type.OriginalDefinition.DeclaringSyntaxReferences[0].GetSyntax();
+                if (declaringSyntax is StructDeclarationSyntax sds)
+                {
+                    if (ShaderSyntaxWalker.TryGetStructDefinition(Compilation.GetSemanticModel(sds.SyntaxTree), sds, out sd))
+                    {
+                        AddStructure(setName, sd);
+                        return true;
+                    }
                 }
             }
 

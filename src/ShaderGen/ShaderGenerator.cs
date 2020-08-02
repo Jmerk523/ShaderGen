@@ -224,7 +224,7 @@ namespace ShaderGen
 
         private void GetTrees(HashSet<SyntaxTree> treesToVisit, string typeName)
         {
-            INamedTypeSymbol typeSymbol = _compilation.GetTypeByMetadataName(typeName);
+            INamedTypeSymbol typeSymbol = _compilation.FindTypeByMetadataName(typeName);
             if (typeSymbol == null)
             {
                 throw new ShaderGenerationException("No type was found with the name " + typeName);

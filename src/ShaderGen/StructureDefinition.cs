@@ -14,7 +14,14 @@ namespace ShaderGen
             Name = name;
             Fields = fields;
             Alignment = size;
-            CSharpMatchesShaderAlignment = GetCSharpMatchesShaderAlignment();
+            if (size.CSharpSize == size.ShaderSize)
+            {
+                CSharpMatchesShaderAlignment = true;
+            }
+            else
+            {
+                CSharpMatchesShaderAlignment = GetCSharpMatchesShaderAlignment();
+            }
         }
 
         private bool GetCSharpMatchesShaderAlignment()

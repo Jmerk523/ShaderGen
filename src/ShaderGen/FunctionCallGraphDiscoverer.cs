@@ -93,7 +93,7 @@ namespace ShaderGen
         private bool GetDeclaration(TypeAndMethodName name, out BaseMethodDeclarationSyntax decl)
         {
             bool isConstructor = name.MethodName == ".ctor";
-            INamedTypeSymbol symb = Compilation.GetTypeByMetadataName(name.TypeName);
+            INamedTypeSymbol symb = Compilation.FindTypeByMetadataName(name.TypeName);
             foreach (SyntaxReference synRef in symb.DeclaringSyntaxReferences)
             {
                 SyntaxNode node = synRef.GetSyntax();

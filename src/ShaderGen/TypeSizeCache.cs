@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace ShaderGen
 {
@@ -45,6 +46,28 @@ namespace ShaderGen
             return s_cachedSizes.TryGetValue(symbol, out AlignmentInfo alignmentInfo)
                 ? alignmentInfo
                 : Analyze(symbol);
+        }
+
+        private static System.Reflection.BindingFlags internalGetProperty
+            = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.GetProperty;
+
+        private static int GetOffset(IFieldSymbol field)
+        {
+            var symbol = field.GetType().InvokeMember("UnderlyingSymbol",
+                internalGetProperty, null, field, null);
+            var offset = symbol.GetType().InvokeMember("TypeLayoutOffset",
+                internalGetProperty, null, symbol, null);
+            return (offset as int?) ?? 0;
+        }
+
+        private static int GetSize(ITypeSymbol type)
+        {
+            var symbol = type.GetType().InvokeMember("UnderlyingSymbol",
+                internalGetProperty, null, type, null);
+            var layout = symbol.GetType().InvokeMember("Layout",
+                internalGetProperty, null, symbol, null);
+            return (int)layout.GetType().InvokeMember("Size",
+                internalGetProperty | System.Reflection.BindingFlags.Public, null, layout, null);
         }
 
         private static AlignmentInfo Analyze(ITypeSymbol typeSymbol)
@@ -91,9 +114,9 @@ namespace ShaderGen
             }
 
             // Unknown type, get the instance fields.
-            ITypeSymbol[] fields = typeSymbol.GetMembers()
+            var fields = typeSymbol.GetMembers()
                 .Where(symb => symb.Kind == SymbolKind.Field && !symb.IsStatic)
-                .Select(symb => ((IFieldSymbol)symb).Type)
+                .Select(symb => (IFieldSymbol)symb)
                 .ToArray();
 
             if (fields.Length == 0)
@@ -107,14 +130,26 @@ namespace ShaderGen
             int shaderAlignment = 0;
 
             // Calculate size of struct from its fields alignment infos
-            foreach (ITypeSymbol fieldType in fields)
+            foreach (IFieldSymbol field in fields)
             {
+                var offset = GetOffset(field);
+                if (offset > 0)
+                {
+                    csharpSize = offset;
+                }
+
                 // Determine if type is blittable
-                alignmentInfo = Analyze(fieldType);
+                alignmentInfo = Analyze(field.Type);
                 csharpAlignment = Math.Max(csharpAlignment, alignmentInfo.CSharpAlignment);
                 csharpSize += alignmentInfo.CSharpSize + csharpSize % alignmentInfo.CSharpAlignment;
                 shaderAlignment = Math.Max(shaderAlignment, alignmentInfo.ShaderAlignment);
                 shaderSize += alignmentInfo.ShaderSize + shaderSize % alignmentInfo.ShaderAlignment;
+            }
+
+            var sizeOf = GetSize(typeSymbol);
+            if (sizeOf > 0)
+            {
+                csharpSize = sizeOf;
             }
 
             // Return new alignment info after adding into cache.

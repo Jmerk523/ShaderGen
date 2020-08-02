@@ -13,7 +13,7 @@ namespace ShaderGen
             InvocationParameterInfo[] parameters,
             out InvocationTranslator translator)
         {
-            if (parameters.Length != 1 || method.Length < 2 || method.Length > 4 ||
+            if (parameters.Length != 1 || method.Length < 1 || method.Length > 4 ||
                 method.Any(c => (c != 'X' && c != 'Y' && c != 'Z' && c != 'W')))
             {
                 translator = null;
