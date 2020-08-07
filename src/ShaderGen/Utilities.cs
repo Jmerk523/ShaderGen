@@ -113,7 +113,23 @@ namespace ShaderGen
             return ns.GetMembers(components.Last()).OfType<INamedTypeSymbol>().FirstOrDefault();
         }
 
-        public static INamedTypeSymbol FindTypeByMetadataName(this Compilation compilation, string metadataName)
+        public static ITypeSymbol FindTypeByMetadataName(this Compilation compilation, string metadataName)
+        {
+            bool isArray = false;
+            if (metadataName.EndsWith("[]"))
+            {
+                isArray = true;
+                metadataName = metadataName.Substring(0, metadataName.Length - 2);
+            }
+            ITypeSymbol symbol = FindTypeByMetadataNameCore(compilation, metadataName);
+            if (isArray && symbol != null)
+            {
+                symbol = compilation.CreateArrayTypeSymbol(symbol, 1);
+            }
+            return symbol;
+        }
+
+        private static INamedTypeSymbol FindTypeByMetadataNameCore(Compilation compilation, string metadataName)
         {
             var typeSymbol = compilation.GetTypeByMetadataName(metadataName);
             if (typeSymbol != null)
@@ -308,11 +324,12 @@ namespace ShaderGen
             UInt3 computeGroupCounts = new UInt3();
             bool isFragmentShader = false, isComputeShader = false;
             bool isVertexShader = GetMethodAttributes(node, "VertexShader").Any();
+            bool isGeometryShader = GetMethodAttributes(node, "GeometryShader").Any();
             if (!isVertexShader)
             {
                 isFragmentShader = GetMethodAttributes(node, "FragmentShader").Any();
             }
-            if (!isVertexShader && !isFragmentShader)
+            if (!isVertexShader && !isFragmentShader && !isGeometryShader)
             {
                 AttributeSyntax computeShaderAttr = GetMethodAttributes(node, "ComputeShader").FirstOrDefault();
                 if (computeShaderAttr != null)
@@ -330,7 +347,9 @@ namespace ShaderGen
                     ? ShaderFunctionType.FragmentEntryPoint
                     : isComputeShader
                         ? ShaderFunctionType.ComputeEntryPoint
-                        : ShaderFunctionType.Normal;
+                        : isGeometryShader
+                            ? ShaderFunctionType.GeometryEntryPoint
+                            : ShaderFunctionType.Normal;
 
             string nestedTypePrefix = GetFullNestedTypePrefix(node, out bool nested);
 

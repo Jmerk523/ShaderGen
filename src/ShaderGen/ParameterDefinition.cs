@@ -1,4 +1,5 @@
-﻿using Microsoft.CodeAnalysis;
+﻿using System.Linq;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace ShaderGen
@@ -38,7 +39,13 @@ namespace ShaderGen
                 direction = ParameterDirection.InOut;
             }
 
-            return new ParameterDefinition(name, new TypeReference(fullType, semanticModel.GetTypeInfo(ps.Type).Type), direction, declaredSymbol);
+            int fixedSize = declaredSymbol.GetAttributes()
+                .FirstOrDefault(a => a.AttributeClass.Name == nameof(ArraySizeAttribute))
+                ?.ConstructorArguments[0].Value as int? ?? 1;
+
+            return new ParameterDefinition(name,
+                new TypeReference(fullType, semanticModel.GetTypeInfo(ps.Type).Type, fixedSize),
+                direction, declaredSymbol);
         }
     }
 

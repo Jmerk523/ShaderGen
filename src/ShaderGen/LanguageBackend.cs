@@ -16,6 +16,7 @@ namespace ShaderGen
         {
             internal List<StructureDefinition> Structures { get; } = new List<StructureDefinition>();
             internal List<ResourceDefinition> Resources { get; } = new List<ResourceDefinition>();
+            internal List<ResourceDefinition> Statics { get; } = new List<ResourceDefinition>();
             internal List<ShaderFunctionAndMethodDeclarationSyntax> Functions { get; } = new List<ShaderFunctionAndMethodDeclarationSyntax>();
         }
 
@@ -72,6 +73,7 @@ namespace ShaderGen
             }
 
             ResourceDefinition[] vertexResources = null;
+            ResourceDefinition[] geometryResources = null;
             ResourceDefinition[] fragmentResources = null;
             ResourceDefinition[] computeResources = null;
             ShaderFunctionAndMethodDeclarationSyntax[] contextFunctions = context.Functions.ToArray();
@@ -98,6 +100,10 @@ namespace ShaderGen
                     {
                         vertexResources = processedFunction.ResourcesUsed.ToArray();
                     }
+                    else if (sf.Function.Type == ShaderFunctionType.GeometryEntryPoint)
+                    {
+                        geometryResources = processedFunction.ResourcesUsed.ToArray();
+                    }
                     else if (sf.Function.Type == ShaderFunctionType.FragmentEntryPoint)
                     {
                         fragmentResources = processedFunction.ResourcesUsed.ToArray();
@@ -115,6 +121,7 @@ namespace ShaderGen
                 context.Resources.ToArray(),
                 context.Functions.Select(sfabs => sfabs.Function).ToArray(),
                 vertexResources,
+                geometryResources,
                 fragmentResources,
                 computeResources);
         }
@@ -142,6 +149,11 @@ namespace ShaderGen
                 {
                     throw new ShaderGenerationException("Resource type's field had an invalid enum base type: " + enumBaseType.ToDisplayString());
                 }
+                return;
+            }
+            if (tr.TypeInfo is IArrayTypeSymbol arrayType)
+            {
+                ForceTypeDiscovery(setName, new TypeReference(arrayType.ElementType.GetFullMetadataName(), arrayType.ElementType));
                 return;
             }
             ITypeSymbol type = tr.TypeInfo;
@@ -240,7 +252,14 @@ namespace ShaderGen
                 throw new ArgumentNullException(nameof(rd));
             }
 
-            GetContext(setName).Resources.Add(rd);
+            if (rd.ResourceKind == ShaderResourceKind.Local)
+            {
+                GetContext(setName).Statics.Add(rd);
+            }
+            else
+            {
+                GetContext(setName).Resources.Add(rd);
+            }
         }
 
         internal virtual void AddFunction(string setName, ShaderFunctionAndMethodDeclarationSyntax sf)
@@ -361,10 +380,18 @@ namespace ShaderGen
 
         private FieldDefinition ReflectField(IFieldSymbol field)
         {
+            int fixedSize = 1;
             AlignmentInfo fieldSizeAndAlignment;
-            if (field.Type.Kind == SymbolKind.ArrayType)
+            if (field.Type is IArrayTypeSymbol arrayType)
             {
-                throw new NotSupportedException();
+                var elementSizeAndAlignment = TypeSizeCache.Get(arrayType.ElementType);
+                var arraySizeAttribute = field.GetAttributes().Single(a => a.AttributeClass.Name == nameof(ArraySizeAttribute));
+                fixedSize = (int)arraySizeAttribute.ConstructorArguments[0].Value;
+                fieldSizeAndAlignment = new AlignmentInfo(
+                    elementSizeAndAlignment.CSharpSize * fixedSize,
+                    elementSizeAndAlignment.ShaderSize * fixedSize,
+                    elementSizeAndAlignment.CSharpAlignment,
+                    elementSizeAndAlignment.ShaderAlignment);
             }
             else
             {
@@ -403,10 +430,12 @@ namespace ShaderGen
                 }
             }
 
-            return new FieldDefinition(field.Name, new TypeReference(field.Type.GetFullMetadataName(), field.Type), semantic, 0, fieldSizeAndAlignment);
+            return new FieldDefinition(field.Name,
+                new TypeReference(field.Type.GetFullMetadataName(), field.Type, fixedSize),
+                semantic, 0, fieldSizeAndAlignment);
         }
 
-        private bool TryReflectStructure(string setName, INamedTypeSymbol name, out StructureDefinition sd)
+        private bool TryReflectStructure(string setName, ITypeSymbol name, out StructureDefinition sd)
         {
             if (name.TypeKind == TypeKind.Struct)
             {
@@ -420,7 +449,7 @@ namespace ShaderGen
 
         protected bool TryDiscoverStructure(string setName, string name, out StructureDefinition sd)
         {
-            INamedTypeSymbol type = Compilation.FindTypeByMetadataName(name);
+            ITypeSymbol type = Compilation.FindTypeByMetadataName(name);
             if (type == null)
             {
                 sd = null;

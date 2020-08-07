@@ -15,5 +15,7 @@
         DepthTexture2D,
         DepthTexture2DArray,
         AtomicBuffer,
+        Local,
+        Emit
     }
 }

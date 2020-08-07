@@ -18,6 +18,8 @@ namespace ShaderGen
         protected readonly ShaderFunction _shaderFunction;
         private string _containingTypeName;
         private HashSet<ResourceDefinition> _resourcesUsed = new HashSet<ResourceDefinition>();
+        private Dictionary<int, HashSet<ILocalSymbol>> _emittedData = new Dictionary<int, HashSet<ILocalSymbol>>();
+        private SyntaxNode _lastVertexEmit;
 
         public ShaderMethodVisitor(
             Compilation compilation,
@@ -36,15 +38,18 @@ namespace ShaderGen
         public MethodProcessResult VisitFunction(BaseMethodDeclarationSyntax node)
         {
             _containingTypeName = Utilities.GetFullNestedTypePrefix((SyntaxNode)node.Body ?? node.ExpressionBody, out bool _);
+
             StringBuilder sb = new StringBuilder();
             string blockResult;
             // Visit block first in order to discover builtin variables.
             if (node.Body != null)
             {
+                _lastVertexEmit = node.Body.Statements.FirstOrDefault();
                 blockResult = VisitBlock(node.Body);
             }
             else if (node.ExpressionBody != null)
             {
+                _lastVertexEmit = node.ExpressionBody;
                 blockResult = VisitArrowExpressionClause(node.ExpressionBody);
             }
             else
@@ -61,6 +66,16 @@ namespace ShaderGen
 
             sb.AppendLine(functionDeclStr);
             sb.AppendLine(blockResult);
+
+            foreach (var stream in _emittedData)
+            {
+                foreach (var emission in stream.Value)
+                {
+                    _resourcesUsed.Add(new ResourceDefinition(emission.Name, 0, stream.Key,
+                        new TypeReference(emission.Type.GetFullMetadataName(), emission.Type),
+                        ShaderResourceKind.Emit));
+                }
+            }
             return new MethodProcessResult(sb.ToString(), _resourcesUsed);
         }
 
@@ -240,7 +255,7 @@ namespace ShaderGen
         public override string VisitMemberAccessExpression(MemberAccessExpressionSyntax node)
         {
             SymbolInfo exprSymbol = GetModel(node).GetSymbolInfo(node.Expression);
-            if (exprSymbol.Symbol.Kind == SymbolKind.NamedType)
+            if (exprSymbol.Symbol?.Kind == SymbolKind.NamedType)
             {
                 SymbolInfo symbolInfo = GetModel(node).GetSymbolInfo(node);
                 ISymbol symbol = symbolInfo.Symbol;
@@ -273,21 +288,13 @@ namespace ShaderGen
             else
             {
                 // Other accesses
-                bool isIndexerAccess = _backend.IsIndexerAccess(GetModel(node).GetSymbolInfo(node.Name));
+                bool isIndexerAccess = (node.Expression is ElementAccessExpressionSyntax)
+                    || _backend.IsIndexerAccess(GetModel(node).GetSymbolInfo(node.Name));
+
                 string expr = Visit(node.Expression);
                 string name = Visit(node.Name);
 
-                if (!isIndexerAccess)
-                {
-                    return Visit(node.Expression)
-                        + node.OperatorToken.ToFullString()
-                        + Visit(node.Name);
-                }
-                else
-                {
-                    return Visit(node.Expression)
-                        + Visit(node.Name);
-                }
+                return expr + node.OperatorToken.ToFullString() + name;
             }
         }
 
@@ -312,10 +319,7 @@ namespace ShaderGen
                 string type = symbolInfo.Symbol.ContainingType.ToDisplayString();
                 string method = symbolInfo.Symbol.Name;
 
-                if (type == "ShaderGen.ShaderBuiltins")
-                {
-                    ProcessBuiltInMethodInvocation(method, node);
-                }
+                ProcessBuiltInMethodInvocation(method, node);
 
                 return _backend.FormatInvocation(_setName, type, method, parameterInfos);
             }
@@ -360,10 +364,7 @@ namespace ShaderGen
                         });
                     }
 
-                    if (containingType == "ShaderGen.ShaderBuiltins")
-                    {
-                        ProcessBuiltInMethodInvocation(methodName, node);
-                    }
+                    ProcessBuiltInMethodInvocation(methodName, node);
 
                     pis.AddRange(GetParameterInfos(node.ArgumentList));
                     return _backend.FormatInvocation(_setName, containingType, methodName, pis.ToArray());
@@ -387,7 +388,7 @@ namespace ShaderGen
                 case nameof(ShaderBuiltins.Ddx):
                 case nameof(ShaderBuiltins.Ddy):
                 case nameof(ShaderBuiltins.SampleComparisonLevelZero):
-                    if (_shaderFunction.Type == ShaderFunctionType.VertexEntryPoint || _shaderFunction.Type == ShaderFunctionType.ComputeEntryPoint)
+                    if (_shaderFunction.Type != ShaderFunctionType.FragmentEntryPoint)
                     {
                         throw new ShaderGenerationException($"{name} can only be used within Fragment shaders.");
                     }
@@ -396,7 +397,64 @@ namespace ShaderGen
                 case nameof(ShaderBuiltins.InterlockedAdd):
                     _shaderFunction.UsesInterlockedAdd = true;
                     break;
+                case nameof(GeometryExtensions.EmitVertex):
+                case nameof(GeometryExtensions.EmitStreamVertex):
+                    if (_shaderFunction.Type != ShaderFunctionType.GeometryEntryPoint)
+                    {
+                        throw new ShaderGenerationException($"{name} can only be used within Geometry shaders.");
+                    }
+                    ProcessEmitVertex(node);
+                    break;
+                case nameof(GeometryExtensions.EndPrimitive):
+                case nameof(GeometryExtensions.EndStreamPrimitive):
+                    if (_shaderFunction.Type != ShaderFunctionType.GeometryEntryPoint)
+                    {
+                        throw new ShaderGenerationException($"{name} can only be used within Geometry shaders.");
+                    }
+                    break;
             }
+        }
+
+        private void ProcessEmitVertex(InvocationExpressionSyntax node)
+        {
+            var model = GetModel(node);
+            DataFlowAnalysis analysis = null;
+            if (_lastVertexEmit is ExpressionSyntax expression)
+            {
+                analysis = model.AnalyzeDataFlow(expression);
+            }
+            else if (_lastVertexEmit is StatementSyntax lastStatement)
+            {
+                var emitStatement = node.Ancestors().OfType<StatementSyntax>().FirstOrDefault();
+                if (lastStatement.Parent != emitStatement.Parent)
+                {
+                    lastStatement = emitStatement.Parent.ChildNodes().Cast<StatementSyntax>().First();
+                }
+                analysis = model.AnalyzeDataFlow(lastStatement, emitStatement);
+                _lastVertexEmit = emitStatement;
+            }
+
+            var emit = model.GetSymbolInfo(node.ArgumentList.Arguments.Last().Expression);
+            if (!(emit.Symbol is ILocalSymbol local))
+            {
+                throw new ShaderGenerationException("EmitVertex argument must be a variable");
+            }
+
+            if (analysis != null && !analysis.DefinitelyAssignedOnExit.Contains(emit.Symbol))
+            {
+                throw new ShaderGenerationException($"{emit.Symbol.Name} must be fully assigned before every call to EmitVertex");
+            }
+            int streamId = 0;
+            if (node.ArgumentList.Arguments.Count > 1)
+            {
+                streamId = (int)model.GetConstantValue(node.ArgumentList.Arguments.First()).Value;
+            }
+            if (!_emittedData.TryGetValue(streamId, out var emissions))
+            {
+                emissions = new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default);
+                _emittedData.Add(streamId, emissions);
+            }
+            emissions.Add(local);
         }
 
         public override string VisitBinaryExpression(BinaryExpressionSyntax node)
@@ -651,27 +709,35 @@ namespace ShaderGen
             string varType = semanticModel.GetFullTypeName(node.Type);
             string mappedType = _backend.CSharpToShaderType(new TypeReference(varType, semanticModel.GetTypeInfo(node.Type).Type));
 
-            sb.Append(mappedType);
-            sb.Append(' ');
-            VariableDeclaratorSyntax varDeclarator = node.Variables[0];
-            string identifier = _backend.CorrectIdentifier(varDeclarator.Identifier.ToString());
-            sb.Append(identifier);
-
-            if (varDeclarator.Initializer != null)
+            foreach (var varDeclarator in node.Variables)
             {
-                sb.Append(' ');
-                sb.Append(varDeclarator.Initializer.EqualsToken.ToString());
+                sb.Append(mappedType);
                 sb.Append(' ');
 
-                string rightExpr = base.Visit(varDeclarator.Initializer.Value);
-                string rightExprType = Utilities.GetFullTypeName(GetModel(node), varDeclarator.Initializer.Value);
+                string identifier = _backend.CorrectIdentifier(varDeclarator.Identifier.ToString());
+                sb.Append(identifier);
 
-                sb.Append(_backend.CorrectAssignedValue(varType, rightExpr, rightExprType));
+                if (varDeclarator.Initializer != null && !(varDeclarator.Initializer.Value is DefaultExpressionSyntax))
+                {
+                    sb.Append(' ');
+                    sb.Append(varDeclarator.Initializer.EqualsToken.ToString());
+                    sb.Append(' ');
+
+                    string rightExpr = base.Visit(varDeclarator.Initializer.Value);
+                    string rightExprType = Utilities.GetFullTypeName(GetModel(node), varDeclarator.Initializer.Value);
+
+                    sb.Append(_backend.CorrectAssignedValue(varType, rightExpr, rightExprType));
+                }
+
+                sb.AppendLine(";");
             }
 
-            sb.Append(';');
-
             return sb.ToString();
+        }
+
+        public override string VisitVariableDeclarator(VariableDeclaratorSyntax node)
+        {
+            throw new InvalidOperationException();
         }
 
         public override string VisitElementAccessExpression(ElementAccessExpressionSyntax node)
@@ -688,10 +754,20 @@ namespace ShaderGen
 
         public override string VisitCastExpression(CastExpressionSyntax node)
         {
-            string varType = _compilation.GetSemanticModel(node.Type.SyntaxTree).GetFullTypeName(node.Type);
-            string mappedType = _backend.CSharpToShaderType(varType);
+            var semanticModel = _compilation.GetSemanticModel(node.SyntaxTree);
+            var conversion = semanticModel.ClassifyConversion(node.Expression, semanticModel.GetTypeInfo(node).ConvertedType);
 
-            return _backend.CorrectCastExpression(mappedType, Visit(node.Expression));
+            if (conversion.IsImplicit && conversion.IsNumeric)
+            {
+                return Visit(node.Expression);
+            }
+            else
+            {
+                string varType = semanticModel.GetFullTypeName(node.Type);
+                string mappedType = _backend.CSharpToShaderType(varType);
+
+                return _backend.CorrectCastExpression(mappedType, Visit(node.Expression));
+            }
         }
 
         public override string VisitDeclarationExpression(DeclarationExpressionSyntax node)

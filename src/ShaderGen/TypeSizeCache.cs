@@ -70,6 +70,16 @@ namespace ShaderGen
                 internalGetProperty | System.Reflection.BindingFlags.Public, null, layout, null);
         }
 
+        private static int Align(int value, int alignment)
+        {
+            int mult = Math.DivRem(value, alignment, out var rem);
+            if (rem > 0)
+            {
+                return (mult + 1) * alignment;
+            }
+            return value;
+        }
+
         private static AlignmentInfo Analyze(ITypeSymbol typeSymbol)
         {
             // Check if we already know this type
@@ -132,20 +142,57 @@ namespace ShaderGen
             // Calculate size of struct from its fields alignment infos
             foreach (IFieldSymbol field in fields)
             {
+                // Determine if type is blittable
+                if (field.Type is IArrayTypeSymbol arrayType)
+                {
+                    // We can only analyze array size as fields since the field has the attribute, not the type
+                    var elementSizeAndAlignment = Get(arrayType.ElementType);
+                    var arraySizeAttribute = field.GetAttributes().Single(a => a.AttributeClass.Name == nameof(ArraySizeAttribute));
+                    var arraySize = (int)arraySizeAttribute.ConstructorArguments[0].Value;
+                    var shaderAlign = Align(elementSizeAndAlignment.ShaderAlignment, 16);
+                    alignmentInfo = new AlignmentInfo(
+                        elementSizeAndAlignment.CSharpSize * arraySize,
+                        Align(elementSizeAndAlignment.ShaderSize * arraySize, shaderAlign),
+                        elementSizeAndAlignment.CSharpAlignment,
+                        shaderAlign);
+                }
+                else
+                {
+                    alignmentInfo = Analyze(field.Type);
+                }
+
+                // If specified, the field offset dictates the size of the csharp structure at the point where the field starts
+                csharpAlignment = Math.Max(csharpAlignment, alignmentInfo.CSharpAlignment);
                 var offset = GetOffset(field);
                 if (offset > 0)
                 {
                     csharpSize = offset;
                 }
+                else
+                {
+                    csharpSize = Align(csharpSize, alignmentInfo.CSharpAlignment);
+                }
+                csharpSize += alignmentInfo.CSharpSize;
 
-                // Determine if type is blittable
-                alignmentInfo = Analyze(field.Type);
-                csharpAlignment = Math.Max(csharpAlignment, alignmentInfo.CSharpAlignment);
-                csharpSize += alignmentInfo.CSharpSize + csharpSize % alignmentInfo.CSharpAlignment;
                 shaderAlignment = Math.Max(shaderAlignment, alignmentInfo.ShaderAlignment);
-                shaderSize += alignmentInfo.ShaderSize + shaderSize % alignmentInfo.ShaderAlignment;
+                shaderSize = Align(shaderSize, alignmentInfo.ShaderAlignment);
+                shaderSize += alignmentInfo.ShaderSize;
             }
 
+            // Structures always align to a multiple of 16
+            if (typeSymbol.TypeKind == TypeKind.Struct)
+            {
+                shaderAlignment = Align(specificShaderAlignment ?? shaderAlignment, 16);
+            }
+            else
+            {
+                shaderAlignment = specificShaderAlignment ?? shaderAlignment;
+            }
+
+            // The overall shader object size is always a multiple of its alignment
+            shaderSize = Align(shaderSize, shaderAlignment);
+
+            // If specified, the overall csharp object size is fixed
             var sizeOf = GetSize(typeSymbol);
             if (sizeOf > 0)
             {
@@ -153,7 +200,7 @@ namespace ShaderGen
             }
 
             // Return new alignment info after adding into cache.
-            alignmentInfo = new AlignmentInfo(csharpSize, shaderSize, csharpAlignment, specificShaderAlignment ?? shaderAlignment);
+            alignmentInfo = new AlignmentInfo(csharpSize, shaderSize, csharpAlignment, shaderAlignment);
             s_cachedSizes.TryAdd(typeSymbol, alignmentInfo);
             return alignmentInfo;
         }

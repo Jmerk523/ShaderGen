@@ -29,10 +29,25 @@ namespace ShaderGen.Glsl
 
         protected override void WriteUniform(StringBuilder sb, ResourceDefinition rd)
         {
-            string layout = FormatLayoutStr(rd);
+            var isArrayType = rd.ValueType.TypeInfo is IArrayTypeSymbol;
+            string layout;
+            if (isArrayType)
+            {
+                layout = FormatLayoutStr(rd, "std140");
+            }
+            else
+            {
+                layout = FormatLayoutStr(rd);
+            }
+
             sb.AppendLine($"{layout} uniform {rd.Name}");
             sb.AppendLine("{");
-            sb.AppendLine($"    {CSharpToShaderType(rd.ValueType.Name)} field_{CorrectIdentifier(rd.Name.Trim())};");
+            sb.Append($"    {CSharpToShaderType(rd.ValueType.Name)} field_{CorrectIdentifier(rd.Name.Trim())}");
+            if (isArrayType)
+            {
+                sb.Append($"[{rd.Name}_MAX_SIZE]");
+            }
+            sb.AppendLine(";");
             sb.AppendLine("};");
             sb.AppendLine();
         }

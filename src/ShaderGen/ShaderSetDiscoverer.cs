@@ -24,24 +24,34 @@ namespace ShaderGen
             }
             else if (node.Name.ToFullString().Contains("ShaderSet"))
             {
-                string name = GetStringParam(node, 0);
+                int paramIndex = 0;
+                string name = GetStringParam(node, paramIndex++);
 
                 TypeAndMethodName vsName = null;
-                string vs = GetStringParam(node, 1);
+                string vs = GetStringParam(node, paramIndex++);
                 if (vs != null && !TypeAndMethodName.Get(vs, out vsName))
                 {
                     throw new ShaderGenerationException("ShaderSetAttribute has an incomplete or invalid vertex shader name.");
                 }
 
+                TypeAndMethodName gsName = null;
+                if (node.ArgumentList.Arguments.Count > 3)
+                {
+                    string gs = GetStringParam(node, paramIndex++);
+                    if (gs != null && !TypeAndMethodName.Get(gs, out gsName))
+                    {
+                        throw new ShaderGenerationException("ShaderSetAttribute has an incomplete or invalid geometry shader name.");
+                    }
+                }
 
                 TypeAndMethodName fsName = null;
-                string fs = GetStringParam(node, 2);
+                string fs = GetStringParam(node, paramIndex++);
                 if (fs != null && !TypeAndMethodName.Get(fs, out fsName))
                 {
                     throw new ShaderGenerationException("ShaderSetAttribute has an incomplete or invalid fragment shader name.");
                 }
 
-                if (vsName == null && fsName == null)
+                if (vsName == null && gsName == null && fsName == null)
                 {
                     throw new ShaderGenerationException("ShaderSetAttribute must specify at least one shader name.");
                 }
@@ -54,6 +64,7 @@ namespace ShaderGen
                 _shaderSets.Add(new ShaderSetInfo(
                     name,
                     vsName,
+                    gsName,
                     fsName));
             }
         }

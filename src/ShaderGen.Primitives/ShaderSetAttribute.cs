@@ -7,6 +7,7 @@ namespace ShaderGen
     {
         public string Name { get; }
         public string VertexShader { get; }
+        public string GeometryShader { get; }
         public string FragmentShader { get; }
 
         public ShaderSetAttribute(string name, string vs, string fs)
@@ -14,6 +15,12 @@ namespace ShaderGen
             Name = name;
             VertexShader = vs;
             FragmentShader = fs;
+        }
+
+        public ShaderSetAttribute(string name, string vs, string gs, string fs)
+            : this(name, vs, fs)
+        {
+            GeometryShader = gs;
         }
     }
 }

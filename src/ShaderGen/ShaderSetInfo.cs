@@ -6,8 +6,18 @@ namespace ShaderGen
     {
         public string Name { get; }
         public TypeAndMethodName VertexShader { get; }
+        public TypeAndMethodName GeometryShader { get; }
         public TypeAndMethodName FragmentShader { get; }
         public TypeAndMethodName ComputeShader { get; }
+
+        public ShaderSetInfo(string name, TypeAndMethodName vs, TypeAndMethodName gs, TypeAndMethodName fs)
+            //: this(name, vs, fs)
+        {
+            Name = name;
+            GeometryShader = gs;
+            VertexShader = vs;
+            FragmentShader = fs;
+        }
 
         public ShaderSetInfo(string name, TypeAndMethodName vs, TypeAndMethodName fs)
         {

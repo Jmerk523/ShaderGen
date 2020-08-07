@@ -6,5 +6,6 @@
         VertexEntryPoint,
         FragmentEntryPoint,
         ComputeEntryPoint,
+        GeometryEntryPoint
     }
 }

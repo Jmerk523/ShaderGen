@@ -184,9 +184,20 @@ namespace ShaderGen.Glsl
 
             Dictionary<string, InvocationTranslator> m4x4Mappings = new Dictionary<string, InvocationTranslator>()
             {
-                { ".ctor", MatrixCtor }
+                { ".ctor", MatrixCtor },
+                { nameof(Matrix4x4.Invert), Invert },
+                { nameof(Matrix4x4.Add), SimpleNameTranslator() },
+                { nameof(Matrix4x4.Multiply), SimpleNameTranslator("mul") },
+                { nameof(Matrix4x4.GetDeterminant), SimpleNameTranslator("determinant") },
+                { nameof(Matrix4x4.Transpose), SimpleNameTranslator() }
             };
             ret.Add("System.Numerics.Matrix4x4", new DictionaryTypeInvocationTranslator(m4x4Mappings));
+
+            Dictionary<string, InvocationTranslator> bufferMappings = new Dictionary<string, InvocationTranslator>()
+            {
+                { nameof(UniformBuffer<int>.Length), Length },
+            };
+            ret.Add("ShaderGen.UniformBuffer", new DictionaryTypeInvocationTranslator(bufferMappings));
 
             Dictionary<string, InvocationTranslator> mathfMappings = new Dictionary<string, InvocationTranslator>()
             {
@@ -230,6 +241,15 @@ namespace ShaderGen.Glsl
                 { nameof(VectorExtensions.SetComponent), VectorSetComponent },
             };
             ret.Add("ShaderGen.VectorExtensions", new DictionaryTypeInvocationTranslator(vectorExtensionMappings));
+
+            Dictionary<string, InvocationTranslator> geometryExtensionMappings = new Dictionary<string, InvocationTranslator>()
+            {
+                { nameof(GeometryExtensions.EndPrimitive), SimpleNameTranslator() },
+                { nameof(GeometryExtensions.EndStreamPrimitive), SimpleNameTranslator() },
+                { nameof(GeometryExtensions.EmitVertex), EmitVertex },
+                { nameof(GeometryExtensions.EmitStreamVertex), EmitStreamVertex },
+            };
+            ret.Add("ShaderGen.GeometryExtensions", new DictionaryTypeInvocationTranslator(geometryExtensionMappings));
 
             return ret;
         }
@@ -664,6 +684,26 @@ namespace ShaderGen.Glsl
             GetVectorTypeInfo(typeName, out string shaderType, out int elementCount);
             return
                 $"{shaderType}({string.Join(",", _vectorAccessors.Take(elementCount).Select(a => check.Replace("`", "." + a)))})";
+        }
+
+        private static string Invert(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"{parameters[1].Identifier} = inverse({parameters[0].Identifier})";
+        }
+
+        private static string Length(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return "length()";
+        }
+
+        private static string EmitVertex(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return "EmitVertex()";
+        }
+
+        private static string EmitStreamVertex(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"EmitStreamVertex({parameters[0].Identifier})";
         }
     }
 }

@@ -12,6 +12,7 @@ namespace ShaderGen
         public ShaderFunction[] Functions { get; }
 
         public ResourceDefinition[] VertexResources { get; }
+        public ResourceDefinition[] GeometryResources { get; }
         public ResourceDefinition[] FragmentResources { get; }
         public ResourceDefinition[] ComputeResources { get; }
 
@@ -20,6 +21,7 @@ namespace ShaderGen
             ResourceDefinition[] resources,
             ShaderFunction[] functions,
             ResourceDefinition[] vertexResources,
+            ResourceDefinition[] geometryResources,
             ResourceDefinition[] fragmentResources,
             ResourceDefinition[] computeResources)
         {
@@ -27,6 +29,7 @@ namespace ShaderGen
             AllResources = resources;
             Functions = functions;
             VertexResources = vertexResources;
+            GeometryResources = geometryResources;
             FragmentResources = fragmentResources;
             ComputeResources = computeResources;
         }

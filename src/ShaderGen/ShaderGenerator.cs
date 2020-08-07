@@ -16,27 +16,29 @@ namespace ShaderGen
             Compilation compilation,
             LanguageBackend[] languages,
             params IShaderSetProcessor[] processors)
-            : this(compilation, languages, null, null, null, processors) { }
+            : this(compilation, languages, null, null, null, null, processors) { }
 
         public ShaderGenerator(
             Compilation compilation,
             LanguageBackend language,
             params IShaderSetProcessor[] processors)
-            : this(compilation, new[] { language }, null, null, null, processors) { }
+            : this(compilation, new[] { language }, null, null, null, null, processors) { }
 
         public ShaderGenerator(
             Compilation compilation,
             LanguageBackend language,
             string vertexFunctionName = null,
+            string geometryFunctionName = null,
             string fragmentFunctionName = null,
             string computeFunctionName = null,
             params IShaderSetProcessor[] processors)
-        : this(compilation, new[] { language }, vertexFunctionName, fragmentFunctionName, computeFunctionName, processors) { }
+        : this(compilation, new[] { language }, vertexFunctionName, geometryFunctionName, fragmentFunctionName, computeFunctionName, processors) { }
 
         public ShaderGenerator(
             Compilation compilation,
             LanguageBackend[] languages,
             string vertexFunctionName = null,
+            string geometryFunctionName = null,
             string fragmentFunctionName = null,
             string computeFunctionName = null,
             params IShaderSetProcessor[] processors)
@@ -58,6 +60,7 @@ namespace ShaderGen
 
             // If we've not specified any names, we're auto-discovering
             if (string.IsNullOrWhiteSpace(vertexFunctionName) &&
+                string.IsNullOrWhiteSpace(geometryFunctionName) &&
                 string.IsNullOrWhiteSpace(fragmentFunctionName) &&
                 string.IsNullOrWhiteSpace(computeFunctionName))
             {
@@ -82,6 +85,14 @@ namespace ShaderGen
                     $"The name passed to {nameof(vertexFunctionName)} must be a fully-qualified type and method.");
             }
 
+            TypeAndMethodName geometry = null;
+            if (!string.IsNullOrWhiteSpace(geometryFunctionName)
+                && !TypeAndMethodName.Get(geometryFunctionName, out geometry))
+            {
+                throw new ShaderGenerationException(
+                    $"The name passed to {nameof(geometryFunctionName)} must be a fully-qualified type and method.");
+            }
+
             TypeAndMethodName fragment = null;
             if (!string.IsNullOrWhiteSpace(fragmentFunctionName)
                 && !TypeAndMethodName.Get(fragmentFunctionName, out fragment))
@@ -90,7 +101,7 @@ namespace ShaderGen
                     $"The name passed to {nameof(fragmentFunctionName)} must be a fully-qualified type and method.");
             }
 
-            if (vertex != null || fragment != null)
+            if (vertex != null || geometry != null || fragment != null)
             {
                 // We have either a vertex or fragment, so create a graphics shader set.
                 string setName = string.Empty;
@@ -98,6 +109,18 @@ namespace ShaderGen
                 if (vertex != null)
                 {
                     setName = vertexFunctionName;
+                }
+
+                if (geometry != null)
+                {
+                    if (setName == string.Empty)
+                    {
+                        setName = geometryFunctionName;
+                    }
+                    else
+                    {
+                        setName += "+" + geometryFunctionName;
+                    }
                 }
 
                 if (fragment != null)
@@ -112,7 +135,7 @@ namespace ShaderGen
                     }
                 }
 
-                shaderSets.Add(new ShaderSetInfo(setName, vertex, fragment));
+                shaderSets.Add(new ShaderSetInfo(setName, vertex, geometry, fragment));
             }
 
             TypeAndMethodName compute = null;
@@ -148,6 +171,7 @@ namespace ShaderGen
                     ShaderSetProcessorInput input = new ShaderSetProcessorInput(
                         gss.Name,
                         gss.VertexFunction,
+                        gss.GeometryFunction,
                         gss.FragmentFunction,
                         gss.Model);
                     processor.ProcessShaderSet(input);
@@ -160,6 +184,7 @@ namespace ShaderGen
         private void GenerateShaders(ShaderSetInfo ss, ShaderGenerationResult result)
         {
             TypeAndMethodName vertexFunctionName = ss.VertexShader;
+            TypeAndMethodName geometryFunctionName = ss.GeometryShader;
             TypeAndMethodName fragmentFunctionName = ss.FragmentShader;
             TypeAndMethodName computeFunctionName = ss.ComputeShader;
 
@@ -167,6 +192,10 @@ namespace ShaderGen
             if (vertexFunctionName != null)
             {
                 GetTrees(treesToVisit, vertexFunctionName.TypeName);
+            }
+            if (geometryFunctionName != null)
+            {
+                GetTrees(treesToVisit, geometryFunctionName.TypeName);
             }
             if (fragmentFunctionName != null)
             {
@@ -194,6 +223,9 @@ namespace ShaderGen
                 ShaderFunction vsFunc = (ss.VertexShader != null)
                     ? model.GetFunction(ss.VertexShader.FullName)
                     : null;
+                ShaderFunction gsFunc = (ss.GeometryShader != null)
+                    ? model.GetFunction(ss.GeometryShader.FullName)
+                    : null;
                 ShaderFunction fsFunc = (ss.FragmentShader != null)
                     ? model.GetFunction(ss.FragmentShader.FullName)
                     : null;
@@ -201,11 +233,16 @@ namespace ShaderGen
                     ? model.GetFunction(ss.ComputeShader.FullName)
                     : null;
                 string vsCode = null;
+                string gsCode = null;
                 string fsCode = null;
                 string csCode = null;
                 if (vsFunc != null)
                 {
                     vsCode = language.ProcessEntryFunction(ss.Name, vsFunc).FullText;
+                }
+                if (gsFunc != null)
+                {
+                    gsCode = language.ProcessEntryFunction(ss.Name, gsFunc).FullText;
                 }
                 if (fsFunc != null)
                 {
@@ -218,13 +255,13 @@ namespace ShaderGen
 
                 result.AddShaderSet(
                     language,
-                    new GeneratedShaderSet(ss.Name, vsCode, fsCode, csCode, vsFunc, fsFunc, csFunc, model));
+                    new GeneratedShaderSet(ss.Name, vsCode, gsCode, fsCode, csCode, vsFunc, gsFunc, fsFunc, csFunc, model));
             }
         }
 
         private void GetTrees(HashSet<SyntaxTree> treesToVisit, string typeName)
         {
-            INamedTypeSymbol typeSymbol = _compilation.FindTypeByMetadataName(typeName);
+            ITypeSymbol typeSymbol = _compilation.FindTypeByMetadataName(typeName);
             if (typeSymbol == null)
             {
                 throw new ShaderGenerationException("No type was found with the name " + typeName);

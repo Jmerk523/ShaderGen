@@ -82,8 +82,12 @@ namespace ShaderGen
 
                         AlignmentInfo fieldSizeAndAlignment;
 
+                        int fixedSize = 1;
                         if (typeInfo.Type.Kind == SymbolKind.ArrayType)
                         {
+                            var arraySize = fds.DescendantNodes().OfType<AttributeSyntax>().FirstOrDefault(
+                                attrSyntax => attrSyntax.Name.ToString().EndsWith("ArraySize"));
+                            fixedSize = (int)model.GetConstantValue(arraySize.ArgumentList.Arguments.First().Expression).Value;
                             ITypeSymbol elementType = ((IArrayTypeSymbol)typeInfo.Type).ElementType;
                             AlignmentInfo elementSizeAndAlignment = TypeSizeCache.Get(elementType);
                             fieldSizeAndAlignment = new AlignmentInfo(
@@ -105,7 +109,7 @@ namespace ShaderGen
                         structShaderSize += fieldSizeAndAlignment.ShaderSize;
                         structShaderAlignment = Math.Max(structShaderAlignment, fieldSizeAndAlignment.ShaderAlignment);
 
-                        TypeReference tr = new TypeReference(typeName, model.GetTypeInfo(varDecl.Type).Type);
+                        TypeReference tr = new TypeReference(typeName, model.GetTypeInfo(varDecl.Type).Type, fixedSize);
                         SemanticType semanticType = GetSemanticType(vds);
                         fields.Add(new FieldDefinition(fieldName, tr, semanticType, arrayElementCount, fieldSizeAndAlignment));
                     }
@@ -239,25 +243,48 @@ namespace ShaderGen
             TypeReference valueType = new TypeReference(fullTypeName, typeInfo.Type);
             ShaderResourceKind kind = ClassifyResourceKind(fullTypeName);
 
+            if (kind == ShaderResourceKind.Uniform &&
+                node.Parent is FieldDeclarationSyntax field &&
+                field.Modifiers.Any(f => f.IsKind(SyntaxKind.PrivateKeyword)))
+            {
+                kind = ShaderResourceKind.Local;
+            }
+
             if (kind == ShaderResourceKind.StructuredBuffer
                 || kind == ShaderResourceKind.RWStructuredBuffer
                 || kind == ShaderResourceKind.RWTexture2D)
             {
                 valueType = ParseElementType(vds);
             }
-
-            int set = 0; // Default value if not otherwise specified.
-            if (GetResourceDecl(node, out AttributeSyntax resourceSetDecl))
+            if (kind == ShaderResourceKind.Uniform && fullTypeName.Contains("ShaderGen.UniformBuffer"))
             {
-                set = GetAttributeArgumentIntValue(resourceSetDecl, 0, GetModel(node));
+                var arraySize = node.Parent.DescendantNodes().OfType<AttributeSyntax>().FirstOrDefault(
+                    attrSyntax => attrSyntax.Name.ToString().EndsWith("ArraySize"));
+                var fixedSize = (int)GetModel(node).GetConstantValue(arraySize.ArgumentList.Arguments.First().Expression).Value;
+                valueType = ParseElementType(vds);
+                valueType = new TypeReference(valueType.Name, _compilation.CreateArrayTypeSymbol(valueType.TypeInfo, 1), fixedSize);
             }
 
-            int resourceBinding = GetAndIncrementBinding(set);
-
-            ResourceDefinition rd = new ResourceDefinition(resourceName, set, resourceBinding, valueType, kind);
-            if (kind == ShaderResourceKind.Uniform)
+            ResourceDefinition rd;
+            if (kind == ShaderResourceKind.Local)
             {
-                ValidateUniformType(typeInfo);
+                rd = new ResourceDefinition(resourceName, 0, 0, valueType, kind);
+            }
+            else
+            {
+                int set = 0; // Default value if not otherwise specified.
+                if (GetResourceDecl(node, out AttributeSyntax resourceSetDecl))
+                {
+                    set = GetAttributeArgumentIntValue(resourceSetDecl, 0, GetModel(node));
+                }
+
+                int resourceBinding = GetAndIncrementBinding(set);
+
+                if (kind == ShaderResourceKind.Uniform)
+                {
+                    ValidateUniformType(typeInfo);
+                }
+                rd = new ResourceDefinition(resourceName, set, resourceBinding, valueType, kind);
             }
 
             foreach (LanguageBackend b in _backends) { b.AddResource(_shaderSet.Name, rd); }
@@ -302,9 +329,15 @@ namespace ShaderGen
                 && name != nameof(ShaderGen) + "." + nameof(TextureCubeResource)
                 && name != nameof(ShaderGen) + "." + nameof(Texture2DMSResource)
                 && name != nameof(ShaderGen) + "." + nameof(SamplerResource)
-                && name != nameof(ShaderGen) + "." + nameof(SamplerComparisonResource))
+                && name != nameof(ShaderGen) + "." + nameof(SamplerComparisonResource)
+                && !name.StartsWith(nameof(ShaderGen) + "." + nameof(UniformBuffer<int>)))
             {
-                if (typeInfo.Type.IsReferenceType)
+                var elementType = typeInfo.Type;
+                if (typeInfo.Type is IArrayTypeSymbol arrayType)
+                {
+                    elementType = arrayType.ElementType;
+                }
+                if (elementType.IsReferenceType)
                 {
                     throw new ShaderGenerationException("Shader resource fields must be simple blittable structures.");
                 }

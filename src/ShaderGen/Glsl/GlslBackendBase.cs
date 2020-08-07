@@ -85,6 +85,10 @@ namespace ShaderGen.Glsl
                 switch (rd.ResourceKind)
                 {
                     case ShaderResourceKind.Uniform:
+                        if (rd.ValueType.TypeInfo is IArrayTypeSymbol)
+                        {
+                            sb.AppendLine($"#define {rd.Name}_MAX_SIZE {rd.ValueType.FixedSize}");
+                        }
                         WriteUniform(sb, rd);
                         break;
                     case ShaderResourceKind.Texture2D:
@@ -122,12 +126,39 @@ namespace ShaderGen.Glsl
                     case ShaderResourceKind.DepthTexture2DArray:
                         WriteDepthTexture2DArray(sb, rd);
                         break;
+                    case ShaderResourceKind.Emit:
+                        break;
                     default: throw new ShaderGenerationException("Illegal resource kind: " + rd.ResourceKind);
                 }
             }
 
+            foreach (var variable in context.Statics)
+            {
+                WriteLocal(sb, variable);
+            }
+
             sb.AppendLine(funcStr);
             sb.AppendLine(entryStr);
+
+            if (entryPoint.Function.Type == ShaderFunctionType.GeometryEntryPoint)
+            {
+                int outVarIndex = 0;
+                var outVars = context.Resources
+                    .Where(r => r.ResourceKind == ShaderResourceKind.Emit)
+                    .Where(resourcesUsed.Contains);
+
+                foreach (ResourceDefinition emission in outVars)
+                {
+                    WriteInOutVariable(
+                        sb,
+                        false,
+                        true,
+                        CSharpToShaderType(emission.ValueType.Name),
+                        "out_" + CorrectIdentifier(emission.Name),
+                        outVarIndex);
+                    outVarIndex += 1;
+                }
+            }
 
             WriteMainFunction(setName, sb, entryPoint.Function);
 
@@ -208,7 +239,7 @@ namespace ShaderGen.Glsl
                     }
                 }
             }
-            else
+            else if (entryFunction.Type != ShaderFunctionType.GeometryEntryPoint)
             {
                 Debug.Assert(entryFunction.Type == ShaderFunctionType.FragmentEntryPoint
                     || entryFunction.Type == ShaderFunctionType.ComputeEntryPoint);
@@ -355,11 +386,8 @@ namespace ShaderGen.Glsl
             base.AddResource(setName, rd);
         }
 
-        internal override string CorrectFieldAccess(SymbolInfo symbolInfo)
+        protected virtual string CorrectIdentifierName(string originalName, string identifier)
         {
-            string originalName = symbolInfo.Symbol.Name;
-            string mapped = CSharpToShaderIdentifierName(symbolInfo);
-            string identifier = CorrectIdentifier(mapped);
             if (_uniformNames.Contains(originalName) || _ssboNames.Contains(originalName))
             {
                 return "field_" + identifier;
@@ -368,6 +396,13 @@ namespace ShaderGen.Glsl
             {
                 return identifier;
             }
+        }
+
+        internal override string CorrectFieldAccess(SymbolInfo symbolInfo)
+        {
+            string originalName = symbolInfo.Symbol.Name;
+            string identifier = base.CorrectFieldAccess(symbolInfo);
+            return CorrectIdentifierName(originalName, identifier);
         }
 
         internal override string GetComputeGroupCountsDeclaration(UInt3 groupCounts)
@@ -393,6 +428,11 @@ namespace ShaderGen.Glsl
             "input", "output",
         };
 
+        protected virtual void WriteLocal(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"{CSharpToShaderType(rd.ValueType.Name)} {rd.Name};");
+        }
+
         protected abstract void WriteVersionHeader(
             ShaderFunction function,
             ShaderFunctionAndMethodDeclarationSyntax[] orderedFunctions,
@@ -408,7 +448,6 @@ namespace ShaderGen.Glsl
         protected abstract void WriteRWTexture2D(StringBuilder sb, ResourceDefinition rd, int index);
         protected abstract void WriteDepthTexture2D(StringBuilder sb, ResourceDefinition rd);
         protected abstract void WriteDepthTexture2DArray(StringBuilder sb, ResourceDefinition rd);
-
         protected abstract void WriteInOutVariable(
             StringBuilder sb,
             bool isInVar,

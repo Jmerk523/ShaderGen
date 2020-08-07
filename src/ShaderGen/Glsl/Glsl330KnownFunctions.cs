@@ -184,7 +184,12 @@ namespace ShaderGen.Glsl
 
             Dictionary<string, InvocationTranslator> m4x4Mappings = new Dictionary<string, InvocationTranslator>()
             {
-                { ".ctor", MatrixCtor }
+                { ".ctor", MatrixCtor },
+                { nameof(Matrix4x4.Invert), Invert },
+                { nameof(Matrix4x4.Add), SimpleNameTranslator() },
+                { nameof(Matrix4x4.Multiply), SimpleNameTranslator("mul") },
+                { nameof(Matrix4x4.GetDeterminant), SimpleNameTranslator("determinant") },
+                { nameof(Matrix4x4.Transpose), SimpleNameTranslator() }
             };
             ret.Add("System.Numerics.Matrix4x4", new DictionaryTypeInvocationTranslator(m4x4Mappings));
 
@@ -653,6 +658,11 @@ namespace ShaderGen.Glsl
             GetVectorTypeInfo(typeName, out string shaderType, out int elementCount);
             return
                 $"{shaderType}({string.Join(",", _vectorAccessors.Take(elementCount).Select(a => check.Replace("`", "." + a)))})";
+        }
+
+        private static string Invert(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"inverse({parameters[0].Identifier})";
         }
     }
 }
