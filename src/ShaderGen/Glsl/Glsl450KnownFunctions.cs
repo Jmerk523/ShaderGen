@@ -40,6 +40,7 @@ namespace ShaderGen.Glsl
                 { nameof(ShaderBuiltins.DispatchThreadID), DispatchThreadID },
                 { nameof(ShaderBuiltins.Exp), SimpleNameTranslator() },
                 { nameof(ShaderBuiltins.Exp2), SimpleNameTranslator() },
+                { nameof(ShaderBuiltins.Fetch), Texture("texelFetch") },
                 { nameof(ShaderBuiltins.Floor), SimpleNameTranslator() },
                 { nameof(ShaderBuiltins.FMod), FMod },
                 { nameof(ShaderBuiltins.Frac), SimpleNameTranslator("fract") },
@@ -60,13 +61,16 @@ namespace ShaderGen.Glsl
                 { nameof(ShaderBuiltins.Radians), SimpleNameTranslator() },
                 { nameof(ShaderBuiltins.Round), Round },
                 { nameof(ShaderBuiltins.Rsqrt), SimpleNameTranslator("inversesqrt") },
-                { nameof(ShaderBuiltins.Sample), Sample },
+                { nameof(ShaderBuiltins.Sample), Texture("texture") },
+                { nameof(ShaderBuiltins.Samplei), Texture("texture", "i") },
+                { nameof(ShaderBuiltins.Sampleu), Texture("texture", "u") },
                 { nameof(ShaderBuiltins.SampleComparisonLevelZero), SampleComparisonLevelZero },
-                { nameof(ShaderBuiltins.SampleGrad), SampleGrad },
+                { nameof(ShaderBuiltins.SampleGrad), Texture("textureGrad") },
                 { nameof(ShaderBuiltins.Saturate), Saturate },
                 { nameof(ShaderBuiltins.Sign), SimpleNameTranslator() },
                 { nameof(ShaderBuiltins.Sin), SimpleNameTranslator() },
                 { nameof(ShaderBuiltins.Sinh), SimpleNameTranslator() },
+                { nameof(ShaderBuiltins.Size), Texture("textureSize", null) },
                 { nameof(ShaderBuiltins.SmoothStep), SimpleNameTranslator() },
                 { nameof(ShaderBuiltins.Sqrt), SimpleNameTranslator() },
                 { nameof(ShaderBuiltins.Step), SimpleNameTranslator() },
@@ -244,8 +248,8 @@ namespace ShaderGen.Glsl
 
             Dictionary<string, InvocationTranslator> geometryExtensionMappings = new Dictionary<string, InvocationTranslator>()
             {
-                { nameof(GeometryExtensions.EndPrimitive), SimpleNameTranslator() },
-                { nameof(GeometryExtensions.EndStreamPrimitive), SimpleNameTranslator() },
+                { nameof(GeometryExtensions.EndPrimitive), SimpleNameTranslator(nameof(GeometryExtensions.EndPrimitive)) },
+                { nameof(GeometryExtensions.EndStreamPrimitive), SimpleNameTranslator(nameof(GeometryExtensions.EndStreamPrimitive)) },
                 { nameof(GeometryExtensions.EmitVertex), EmitVertex },
                 { nameof(GeometryExtensions.EmitStreamVertex), EmitStreamVertex },
             };
@@ -324,40 +328,61 @@ namespace ShaderGen.Glsl
             return $"{parameters[0].Identifier} * {parameters[1].Identifier}";
         }
 
-        private static string Sample(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        private static InvocationTranslator Texture(string shaderMethod, string samplerPrefix = "")
         {
-            if (parameters[0].FullTypeName == "ShaderGen.Texture2DResource")
+            return (type, method, parameters) =>
             {
-                return $"texture(sampler2D({parameters[0].Identifier}, {parameters[1].Identifier}), {parameters[2].Identifier})";
-            }
-            else if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
-            {
-                return $"texture(sampler2DArray({parameters[0].Identifier}, {parameters[1].Identifier}), vec3({parameters[2].Identifier}, {parameters[3].Identifier}))";
-            }
-            else if (parameters[0].FullTypeName == "ShaderGen.TextureCubeResource")
-            {
-                return $"texture(samplerCube({parameters[0].Identifier}, {parameters[1].Identifier}), {parameters[2].Identifier})";
-            }
-            else
-            {
-                throw new NotImplementedException();
-            }
-        }
+                string texCoord = parameters[1].Identifier;
+                int usedParams = samplerPrefix == null ? 1 : 2;
+                string samplerMethod;
+                switch (parameters[0].FullTypeName)
+                {
+                    case nameof(ShaderGen) + "." + nameof(Texture1DResource):
+                        samplerMethod = "sampler1D";
+                        break;
+                    case nameof(ShaderGen) + "." + nameof(Texture2DResource):
+                        samplerMethod = "sampler2D";
+                        break;
+                    case nameof(ShaderGen) + "." + nameof(Texture3DResource):
+                        samplerMethod = "sampler3D";
+                        break;
+                    case nameof(ShaderGen) + "." + nameof(Texture2DRectResource):
+                        samplerMethod = "sampler2DRect";
+                        break;
+                    case nameof(ShaderGen) + "." + nameof(Texture2DMSResource):
+                        samplerMethod = "sampler2DMS";
+                        break;
+                    case nameof(ShaderGen) + "." + nameof(Texture2DArrayResource):
+                        samplerMethod = "sampler2DArray";
+                        texCoord = $"vec3({texCoord}, {parameters[2].Identifier})";
+                        ++usedParams;
+                        break;
+                    case nameof(ShaderGen) + "." + nameof(TextureCubeResource):
+                        samplerMethod = "samplerCube";
+                        texCoord = $"vec3({texCoord}, {parameters[2].Identifier})";
+                        ++usedParams;
+                        break;
+                    case nameof(ShaderGen) + "." + nameof(TextureBufferResource):
+                        samplerMethod = "samplerBuffer";
+                        if (method != nameof(ShaderBuiltins.Fetch))
+                        {
+                            throw new NotSupportedException("Buffer Texture can only be accessed via Fetch");
+                        }
+                        break;
+                    default:
+                        throw new NotSupportedException(parameters[0].FullTypeName);
+                }
 
-        private static string SampleGrad(string typeName, string methodName, InvocationParameterInfo[] parameters)
-        {
-            if (parameters[0].FullTypeName == "ShaderGen.Texture2DResource")
-            {
-                return $"textureGrad(sampler2D({parameters[0].Identifier}, {parameters[1].Identifier}), {parameters[2].Identifier}, {parameters[3].Identifier}, {parameters[4].Identifier})";
-            }
-            else if (parameters[0].FullTypeName == "ShaderGen.Texture2DArrayResource")
-            {
-                return $"textureGrad(sampler2DArray({parameters[0].Identifier}, {parameters[1].Identifier}), vec3({parameters[2].Identifier}, {parameters[3].Identifier}), {parameters[4].Identifier}, {parameters[5].Identifier})";
-            }
-            else
-            {
-                throw new NotImplementedException();
-            }
+                string shaderParams = String.Join(", ", parameters.Select(p => p.Identifier).Skip(usedParams).Prepend(String.Empty));
+                if (samplerPrefix == null)
+                {
+                    return $"{shaderMethod}({parameters[0].Identifier}{shaderParams})";
+                }
+                else
+                {
+                    return $"{shaderMethod}({samplerPrefix}{samplerMethod}({parameters[0].Identifier}, {texCoord}){shaderParams})";
+                }
+            };
         }
 
         private static string SampleComparisonLevelZero(string typeName, string methodName, InvocationParameterInfo[] parameters)
@@ -375,6 +400,11 @@ namespace ShaderGen.Glsl
             {
                 throw new NotImplementedException();
             }
+        }
+
+        private static string Texture(string typeName, string methodName, InvocationParameterInfo[] parameters)
+        {
+            return $"texture({parameters[0].Identifier}, {parameters[1].Identifier})";
         }
 
         private static string Load(string typeName, string methodName, InvocationParameterInfo[] parameters)

@@ -50,13 +50,13 @@ namespace ShaderGen
 
         public static bool TryGetStructDefinition(SemanticModel model, StructDeclarationSyntax node, out StructureDefinition sd)
         {
-            string fullNestedTypePrefix = Utilities.GetFullNestedTypePrefix(node, out bool nested);
-            string structName = node.Identifier.ToFullString().Trim();
-            if (!string.IsNullOrEmpty(fullNestedTypePrefix))
-            {
-                string joiner = nested ? "+" : ".";
-                structName = fullNestedTypePrefix + joiner + structName;
-            }
+            //string fullNestedTypePrefix = Utilities.GetFullNestedTypePrefix(node, out bool nested);
+            //string structName = node.Identifier.ToFullString().Trim();
+            //if (!string.IsNullOrEmpty(fullNestedTypePrefix))
+            //{
+            //    string joiner = nested ? "+" : ".";
+            //    structName = fullNestedTypePrefix + joiner + structName;
+            //}
 
             int structCSharpSize = 0;
             int structShaderSize = 0;
@@ -111,13 +111,24 @@ namespace ShaderGen
 
                         TypeReference tr = new TypeReference(typeName, model.GetTypeInfo(varDecl.Type).Type, fixedSize);
                         SemanticType semanticType = GetSemanticType(vds);
+                        if (semanticType == SemanticType.None)
+                        {
+                            var geometrySemantic = GetGeometrySemantic(vds);
+                            if (geometrySemantic != GeometrySemantic.None)
+                            {
+                                fields.Add(new FieldDefinition(fieldName, tr, geometrySemantic, arrayElementCount, fieldSizeAndAlignment));
+                                continue;
+                            }
+                        }
+
                         fields.Add(new FieldDefinition(fieldName, tr, semanticType, arrayElementCount, fieldSizeAndAlignment));
                     }
                 }
             }
 
+            var type = model.GetDeclaredSymbol(node);
             sd = new StructureDefinition(
-                structName.Trim(),
+                type,
                 fields.ToArray(),
                 new AlignmentInfo(structCSharpSize, structShaderSize, structCSharpAlignment, structShaderAlignment));
             return true;
@@ -212,6 +223,34 @@ namespace ShaderGen
             return SemanticType.None;
         }
 
+        private static GeometrySemantic GetGeometrySemantic(VariableDeclaratorSyntax vds)
+        {
+            AttributeSyntax[] attrs = Utilities.GetMemberAttributes(vds, "GeometrySemantic");
+            if (attrs.Length == 1)
+            {
+                AttributeSyntax semanticTypeAttr = attrs[0];
+                string fullArg0 = semanticTypeAttr.ArgumentList.Arguments[0].ToFullString();
+                if (fullArg0.Contains("."))
+                {
+                    fullArg0 = fullArg0.Substring(fullArg0.LastIndexOf('.') + 1);
+                }
+                if (Enum.TryParse(fullArg0, out GeometrySemantic ret))
+                {
+                    return ret;
+                }
+                else
+                {
+                    throw new ShaderGenerationException("Incorrectly formatted attribute: " + semanticTypeAttr.ToFullString());
+                }
+            }
+            else if (attrs.Length > 1)
+            {
+                throw new ShaderGenerationException("Too many geometry semantics applied to field: " + vds.ToFullString());
+            }
+
+            return GeometrySemantic.None;
+        }
+
         private static bool CheckSingleAttribute(VariableDeclaratorSyntax vds, string name)
         {
             AttributeSyntax[] attrs = Utilities.GetMemberAttributes(vds, name);
@@ -243,26 +282,71 @@ namespace ShaderGen
             TypeReference valueType = new TypeReference(fullTypeName, typeInfo.Type);
             ShaderResourceKind kind = ClassifyResourceKind(fullTypeName);
 
-            if (kind == ShaderResourceKind.Uniform &&
-                node.Parent is FieldDeclarationSyntax field &&
-                field.Modifiers.Any(f => f.IsKind(SyntaxKind.PrivateKeyword)))
+            var structure = _backends.Select(b => b.GetContext(_shaderSet.Name).Structures
+                .FirstOrDefault(s => SymbolEqualityComparer.Default.Equals(s.Type, typeInfo.Type)))
+                .FirstOrDefault();
+            if (structure != null && structure.Fields.Any(f => f.IsBuiltIn))
             {
-                kind = ShaderResourceKind.Local;
+                kind = ShaderResourceKind.BuiltIn;
+            }
+
+            ShaderBuiltin builtin = default;
+            if (kind == ShaderResourceKind.Uniform)
+            {
+                if (node.Parent is FieldDeclarationSyntax field)
+                {
+                    if (field.Modifiers.Any(f => f.IsKind(SyntaxKind.PrivateKeyword)))
+                    {
+                        kind = ShaderResourceKind.Local;
+                    }
+                    else if (field.AttributeLists.Any(l => l.Attributes.Any(a => a.Name.ToString().Contains("Semantic"))))
+                    {
+                        kind = ShaderResourceKind.BuiltIn;
+                        SemanticType semanticType = GetSemanticType(vds);
+                        if (semanticType == SemanticType.None)
+                        {
+                            var geometrySemantic = GetGeometrySemantic(vds);
+                            if (geometrySemantic != GeometrySemantic.None)
+                            {
+                                builtin = new ShaderBuiltin(geometrySemantic);
+                            }
+                        }
+                        else
+                        {
+                            builtin = new ShaderBuiltin(semanticType);
+                        }
+                    }
+                }
+                else if (typeInfo.Type.GetAttributes().Any(a => a.AttributeClass.Name.Contains("Semantic")))
+                {
+                    kind = ShaderResourceKind.BuiltIn;
+                }
             }
 
             if (kind == ShaderResourceKind.StructuredBuffer
                 || kind == ShaderResourceKind.RWStructuredBuffer
-                || kind == ShaderResourceKind.RWTexture2D)
+                || kind == ShaderResourceKind.RWTexture2D
+                || valueType.Name.Contains(nameof(UniformBuffer<int>)))
             {
                 valueType = ParseElementType(vds);
             }
-            if (kind == ShaderResourceKind.Uniform && fullTypeName.Contains("ShaderGen.UniformBuffer"))
+
+            if (node.Parent is FieldDeclarationSyntax)
             {
                 var arraySize = node.Parent.DescendantNodes().OfType<AttributeSyntax>().FirstOrDefault(
                     attrSyntax => attrSyntax.Name.ToString().EndsWith("ArraySize"));
-                var fixedSize = (int)GetModel(node).GetConstantValue(arraySize.ArgumentList.Arguments.First().Expression).Value;
-                valueType = ParseElementType(vds);
-                valueType = new TypeReference(valueType.Name, _compilation.CreateArrayTypeSymbol(valueType.TypeInfo, 1), fixedSize);
+                if (arraySize != null)
+                {
+                    var fixedSize = (int)GetModel(node).GetConstantValue(arraySize.ArgumentList.Arguments.First().Expression).Value;
+                    valueType = new TypeReference(valueType.Name, valueType.TypeInfo, fixedSize);
+                }
+
+                var emitAttribute = node.Parent.DescendantNodes().OfType<AttributeSyntax>().FirstOrDefault(
+                    attrSyntax => attrSyntax.Name.ToString().EndsWith("EmitVertex"));
+                if (emitAttribute != null)
+                {
+                    kind = ShaderResourceKind.Emit;
+                }
             }
 
             ResourceDefinition rd;
@@ -286,6 +370,8 @@ namespace ShaderGen
                 }
                 rd = new ResourceDefinition(resourceName, set, resourceBinding, valueType, kind);
             }
+
+            rd.Semantic = builtin.Semantic;
 
             foreach (LanguageBackend b in _backends) { b.AddResource(_shaderSet.Name, rd); }
         }
@@ -324,10 +410,14 @@ namespace ShaderGen
         private void ValidateUniformType(TypeInfo typeInfo)
         {
             string name = typeInfo.Type.ToDisplayString();
-            if (name != nameof(ShaderGen) + "." + nameof(Texture2DResource)
+            if (name != nameof(ShaderGen) + "." + nameof(Texture1DResource)
+                && name != nameof(ShaderGen) + "." + nameof(Texture2DResource)
+                && name != nameof(ShaderGen) + "." + nameof(Texture3DResource)
                 && name != nameof(ShaderGen) + "." + nameof(Texture2DArrayResource)
-                && name != nameof(ShaderGen) + "." + nameof(TextureCubeResource)
+                && name != nameof(ShaderGen) + "." + nameof(Texture2DRectResource)
                 && name != nameof(ShaderGen) + "." + nameof(Texture2DMSResource)
+                && name != nameof(ShaderGen) + "." + nameof(TextureCubeResource)
+                && name != nameof(ShaderGen) + "." + nameof(TextureBufferResource)
                 && name != nameof(ShaderGen) + "." + nameof(SamplerResource)
                 && name != nameof(ShaderGen) + "." + nameof(SamplerComparisonResource)
                 && !name.StartsWith(nameof(ShaderGen) + "." + nameof(UniformBuffer<int>)))
@@ -337,22 +427,34 @@ namespace ShaderGen
                 {
                     elementType = arrayType.ElementType;
                 }
-                if (elementType.IsReferenceType)
+                if (elementType.IsReferenceType && !ShaderPrimitiveTypes.IsPrimitiveType(name))
                 {
                     throw new ShaderGenerationException("Shader resource fields must be simple blittable structures.");
                 }
             }
         }
 
-        private ShaderResourceKind ClassifyResourceKind(string fullTypeName)
+        internal static ShaderResourceKind ClassifyResourceKind(string fullTypeName)
         {
-            if (fullTypeName == "ShaderGen.Texture2DResource")
+            if (fullTypeName == "ShaderGen.Texture1DResource")
+            {
+                return ShaderResourceKind.Texture1D;
+            }
+            else if (fullTypeName == "ShaderGen.Texture2DResource")
             {
                 return ShaderResourceKind.Texture2D;
             }
-            if (fullTypeName == "ShaderGen.Texture2DArrayResource")
+            else if (fullTypeName == "ShaderGen.Texture3DResource")
+            {
+                return ShaderResourceKind.Texture3D;
+            }
+            else if (fullTypeName == "ShaderGen.Texture2DArrayResource")
             {
                 return ShaderResourceKind.Texture2DArray;
+            }
+            else if (fullTypeName == "ShaderGen.Texture2DRectResource")
+            {
+                return ShaderResourceKind.Texture2DRect;
             }
             else if (fullTypeName == "ShaderGen.TextureCubeResource")
             {
@@ -361,6 +463,10 @@ namespace ShaderGen
             else if (fullTypeName == "ShaderGen.Texture2DMSResource")
             {
                 return ShaderResourceKind.Texture2DMS;
+            }
+            else if (fullTypeName == "ShaderGen.TextureBufferResource")
+            {
+                return ShaderResourceKind.TextureBuffer;
             }
             else if (fullTypeName == "ShaderGen.SamplerResource")
             {
@@ -399,7 +505,6 @@ namespace ShaderGen
                 return ShaderResourceKind.Uniform;
             }
         }
-
 
         private bool GetResourceDecl(VariableDeclarationSyntax node, out AttributeSyntax attr)
         {

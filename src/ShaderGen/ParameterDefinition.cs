@@ -41,7 +41,7 @@ namespace ShaderGen
 
             int fixedSize = declaredSymbol.GetAttributes()
                 .FirstOrDefault(a => a.AttributeClass.Name == nameof(ArraySizeAttribute))
-                ?.ConstructorArguments[0].Value as int? ?? 1;
+                ?.ConstructorArguments[0].Value as int? ?? 0;
 
             return new ParameterDefinition(name,
                 new TypeReference(fullType, semanticModel.GetTypeInfo(ps.Type).Type, fixedSize),

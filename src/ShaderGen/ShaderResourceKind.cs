@@ -3,10 +3,14 @@
     public enum ShaderResourceKind
     {
         Uniform,
+        Texture1D,
         Texture2D,
+        Texture3D,
         Texture2DArray,
+        Texture2DRect,
         TextureCube,
         Texture2DMS,
+        TextureBuffer,
         Sampler,
         StructuredBuffer,
         RWStructuredBuffer,
@@ -16,6 +20,7 @@
         DepthTexture2DArray,
         AtomicBuffer,
         Local,
-        Emit
+        Emit,
+        BuiltIn
     }
 }

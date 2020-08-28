@@ -9,7 +9,7 @@ namespace ShaderGen
         public ITypeSymbol TypeInfo { get; }
         public int FixedSize { get; }
 
-        public TypeReference(string name, ITypeSymbol typeInfo, int fixedSize = 1)
+        public TypeReference(string name, ITypeSymbol typeInfo, int fixedSize = 0)
         {
             Name = name;
             TypeInfo = typeInfo;

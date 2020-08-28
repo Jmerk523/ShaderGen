@@ -29,7 +29,7 @@ namespace ShaderGen.Glsl
 
         protected override void WriteUniform(StringBuilder sb, ResourceDefinition rd)
         {
-            var isArrayType = rd.ValueType.TypeInfo is IArrayTypeSymbol;
+            var isArrayType = rd.ValueType.FixedSize > 0;
             string layout;
             if (isArrayType)
             {
@@ -45,7 +45,7 @@ namespace ShaderGen.Glsl
             sb.Append($"    {CSharpToShaderType(rd.ValueType.Name)} field_{CorrectIdentifier(rd.Name.Trim())}");
             if (isArrayType)
             {
-                sb.Append($"[{rd.Name}_MAX_SIZE]");
+                sb.Append($"[{rd.ValueType.FixedSize}]");
             }
             sb.AppendLine(";");
             sb.AppendLine("};");
@@ -86,11 +86,29 @@ namespace ShaderGen.Glsl
             sb.AppendLine(";");
         }
 
+        protected override void WriteTexture1D(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.Append(FormatLayoutStr(rd));
+            sb.Append(' ');
+            sb.Append("uniform texture1D ");
+            sb.Append(CorrectIdentifier(rd.Name));
+            sb.AppendLine(";");
+        }
+
         protected override void WriteTexture2D(StringBuilder sb, ResourceDefinition rd)
         {
             sb.Append(FormatLayoutStr(rd));
             sb.Append(' ');
             sb.Append("uniform texture2D ");
+            sb.Append(CorrectIdentifier(rd.Name));
+            sb.AppendLine(";");
+        }
+
+        protected override void WriteTexture3D(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.Append(FormatLayoutStr(rd));
+            sb.Append(' ');
+            sb.Append("uniform texture3D ");
             sb.Append(CorrectIdentifier(rd.Name));
             sb.AppendLine(";");
         }
@@ -104,11 +122,29 @@ namespace ShaderGen.Glsl
             sb.AppendLine(";");
         }
 
+        protected override void WriteTexture2DRect(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.Append(FormatLayoutStr(rd));
+            sb.Append(' ');
+            sb.Append("uniform texture2DRect ");
+            sb.Append(CorrectIdentifier(rd.Name));
+            sb.AppendLine(";");
+        }
+
         protected override void WriteTextureCube(StringBuilder sb, ResourceDefinition rd)
         {
             sb.Append(FormatLayoutStr(rd));
             sb.Append(' ');
             sb.Append("uniform textureCube ");
+            sb.Append(CorrectIdentifier(rd.Name));
+            sb.AppendLine(";");
+        }
+
+        protected override void WriteTextureBuffer(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.Append(FormatLayoutStr(rd));
+            sb.Append(' ');
+            sb.Append("uniform textureBuffer ");
             sb.Append(CorrectIdentifier(rd.Name));
             sb.AppendLine(";");
         }
@@ -135,11 +171,13 @@ namespace ShaderGen.Glsl
         protected override void WriteInOutVariable(
             StringBuilder sb,
             bool isInVar,
-            bool isVertexStage,
+            ShaderFunctionType stage,
             string normalizedType,
             string normalizedIdentifier,
-            int index)
+            int index,
+            int arraySize)
         {
+            bool isVertexStage = stage == ShaderFunctionType.VertexEntryPoint;
             string qualifier = isInVar ? "in" : "out";
             string identifier;
             if ((isVertexStage && isInVar) || (!isVertexStage && !isInVar))
@@ -148,8 +186,12 @@ namespace ShaderGen.Glsl
             }
             else
             {
-                Debug.Assert(isVertexStage || isInVar);
+                //Debug.Assert(isVertexStage || isInVar);
                 identifier = $"fsin_{index}";
+            }
+            if (arraySize > 0)
+            {
+                identifier += $"[{arraySize}]";
             }
             sb.AppendLine($"layout(location = {index}) {qualifier} {normalizedType} {identifier};");
 

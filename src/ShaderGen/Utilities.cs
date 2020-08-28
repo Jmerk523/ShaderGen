@@ -353,8 +353,6 @@ namespace ShaderGen
 
             string nestedTypePrefix = GetFullNestedTypePrefix(node, out bool nested);
 
-
-
             List<ParameterDefinition> parameters = new List<ParameterDefinition>();
             foreach (ParameterSyntax ps in node.ParameterList.Parameters)
             {
@@ -368,6 +366,18 @@ namespace ShaderGen
                 parameters.ToArray(),
                 type,
                 computeGroupCounts);
+
+            if (isGeometryShader)
+            {
+                AttributeSyntax geometryShaderAttr = GetMethodAttributes(node, "GeometryShader").FirstOrDefault();
+                var geometryArgs = geometryShaderAttr.ArgumentList.Arguments;
+                if (geometryArgs.Count == 3)
+                {
+                    sf.InputPrimitive = (PrimitiveType)Enum.ToObject(typeof(PrimitiveType), semanticModel.GetConstantValue(geometryArgs[0].Expression).Value);
+                    sf.OutputPrimitive = (PrimitiveType)Enum.ToObject(typeof(PrimitiveType), semanticModel.GetConstantValue(geometryArgs[1].Expression).Value);
+                    sf.MaxVertices = (int)semanticModel.GetConstantValue(geometryArgs[2].Expression).Value;
+                }
+            }
 
             ShaderFunctionAndMethodDeclarationSyntax[] orderedFunctionList;
             if (type != ShaderFunctionType.Normal && generateOrderedFunctionList)

@@ -65,15 +65,33 @@ namespace ShaderGen.Glsl
             sb.AppendLine();
         }
 
+        protected override void WriteTexture1D(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"uniform sampler1D {CorrectIdentifier(rd.Name)};");
+            sb.AppendLine();
+        }
+
         protected override void WriteTexture2D(StringBuilder sb, ResourceDefinition rd)
         {
             sb.AppendLine($"uniform sampler2D {CorrectIdentifier(rd.Name)};");
             sb.AppendLine();
         }
 
+        protected override void WriteTexture3D(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"uniform sampler3D {CorrectIdentifier(rd.Name)};");
+            sb.AppendLine();
+        }
+
         protected override void WriteTexture2DArray(StringBuilder sb, ResourceDefinition rd)
         {
             sb.AppendLine($"uniform sampler2DArray {CorrectIdentifier(rd.Name)};");
+            sb.AppendLine();
+        }
+
+        protected override void WriteTexture2DRect(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"uniform sampler2DRect {CorrectIdentifier(rd.Name)};");
             sb.AppendLine();
         }
 
@@ -86,6 +104,12 @@ namespace ShaderGen.Glsl
         protected override void WriteTexture2DMS(StringBuilder sb, ResourceDefinition rd)
         {
             sb.AppendLine($"uniform sampler2DMS {CorrectIdentifier(rd.Name)};");
+            sb.AppendLine();
+        }
+
+        protected override void WriteTextureBuffer(StringBuilder sb, ResourceDefinition rd)
+        {
+            sb.AppendLine($"uniform samplerBuffer {CorrectIdentifier(rd.Name)};");
             sb.AppendLine();
         }
 
@@ -197,11 +221,13 @@ namespace ShaderGen.Glsl
         protected override void WriteInOutVariable(
             StringBuilder sb,
             bool isInVar,
-            bool isVertexStage,
+            ShaderFunctionType stage,
             string normalizedType,
             string normalizedIdentifier,
-            int index)
+            int index,
+            int arraySize)
         {
+            bool isVertexStage = stage == ShaderFunctionType.VertexEntryPoint;
             string qualifier = isInVar ? "in" : "out";
             string identifier;
             if ((isVertexStage && isInVar) || (!isVertexStage && !isInVar))

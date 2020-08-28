@@ -6,6 +6,7 @@ namespace ShaderGen
 {
     public enum GeometrySemantic
     {
+        None = 0,
         Position,
         PointSize,
         ClipDistance,
@@ -13,8 +14,10 @@ namespace ShaderGen
         Primitive,
         Layer,
         Viewport,
+        PerVertex,
     }
 
+    [AttributeUsage(AttributeTargets.Field, AllowMultiple = true)]
     public class GeometrySemanticAttribute : Attribute
     {
         public GeometrySemantic Semantic { get; }

@@ -17,6 +17,7 @@ namespace ShaderGen
             internal List<StructureDefinition> Structures { get; } = new List<StructureDefinition>();
             internal List<ResourceDefinition> Resources { get; } = new List<ResourceDefinition>();
             internal List<ResourceDefinition> Statics { get; } = new List<ResourceDefinition>();
+            internal List<FieldDefinition> BuiltIns { get; } = new List<FieldDefinition>();
             internal List<ShaderFunctionAndMethodDeclarationSyntax> Functions { get; } = new List<ShaderFunctionAndMethodDeclarationSyntax>();
         }
 
@@ -59,9 +60,14 @@ namespace ShaderGen
                 .Where(rd =>
                     rd.ResourceKind == ShaderResourceKind.Uniform
                     || rd.ResourceKind == ShaderResourceKind.RWStructuredBuffer
-                    || rd.ResourceKind == ShaderResourceKind.StructuredBuffer))
+                    || rd.ResourceKind == ShaderResourceKind.StructuredBuffer
+                    || rd.ResourceKind == ShaderResourceKind.BuiltIn))
             {
-                ForceTypeDiscovery(setName, rd.ValueType);
+                ForceTypeDiscovery(setName, rd.ValueType, out var sd);
+                if (sd != null && sd.Fields.Any(f => f.IsBuiltIn))
+                {
+                    rd.ResourceKind = ShaderResourceKind.BuiltIn;
+                }
             }
             // HACK: Discover all field structure types.
             foreach (StructureDefinition sd in context.Structures.ToArray())
@@ -118,7 +124,7 @@ namespace ShaderGen
 
             return new ShaderModel(
                 context.Structures.ToArray(),
-                context.Resources.ToArray(),
+                context.Resources.Where(r => r.ResourceKind <= ShaderResourceKind.AtomicBuffer).ToArray(),
                 context.Functions.Select(sfabs => sfabs.Function).ToArray(),
                 vertexResources,
                 geometryResources,
@@ -136,8 +142,14 @@ namespace ShaderGen
 
         private void ForceTypeDiscovery(string setName, TypeReference tr)
         {
+            ForceTypeDiscovery(setName, tr, out _);
+        }
+
+        internal void ForceTypeDiscovery(string setName, TypeReference tr, out StructureDefinition sd)
+        {
             if (ShaderPrimitiveTypes.IsPrimitiveType(tr.Name))
             {
+                sd = null;
                 return;
             }
             if (tr.TypeInfo.TypeKind == TypeKind.Enum)
@@ -149,11 +161,12 @@ namespace ShaderGen
                 {
                     throw new ShaderGenerationException("Resource type's field had an invalid enum base type: " + enumBaseType.ToDisplayString());
                 }
+                sd = null;
                 return;
             }
             if (tr.TypeInfo is IArrayTypeSymbol arrayType)
             {
-                ForceTypeDiscovery(setName, new TypeReference(arrayType.ElementType.GetFullMetadataName(), arrayType.ElementType));
+                ForceTypeDiscovery(setName, new TypeReference(arrayType.ElementType.GetFullMetadataName(), arrayType.ElementType), out sd);
                 return;
             }
             ITypeSymbol type = tr.TypeInfo;
@@ -162,7 +175,7 @@ namespace ShaderGen
             {
                 name = Utilities.GetFullTypeName(namedTypeSymb.TypeArguments[0], out _);
             }
-            if (!TryDiscoverStructure(setName, name, out StructureDefinition sd))
+            if (!TryDiscoverStructure(setName, name, out sd))
             {
                 throw new ShaderGenerationException("" +
                     "Resource type's field could not be resolved: " + name);
@@ -170,6 +183,10 @@ namespace ShaderGen
             foreach (FieldDefinition field in sd.Fields)
             {
                 ForceTypeDiscovery(setName, field.Type);
+                if (field.IsBuiltIn)
+                {
+                    GetContext(setName).BuiltIns.Add(field);
+                }
             }
         }
 
@@ -205,6 +222,10 @@ namespace ShaderGen
             if (typeReference.TypeInfo.TypeKind == TypeKind.Enum)
             {
                 typeNameString = Utilities.GetFullName(((INamedTypeSymbol)typeReference.TypeInfo).EnumUnderlyingType);
+            }
+            else if (typeReference.TypeInfo.TypeKind == TypeKind.Array)
+            {
+                typeNameString = typeReference.Name.Trim().TrimEnd('[', ']');
             }
             else
             {
@@ -258,7 +279,12 @@ namespace ShaderGen
             }
             else
             {
-                GetContext(setName).Resources.Add(rd);
+                var context = GetContext(setName);
+                var structure = context.Structures.FirstOrDefault(s => s.Name == rd.ValueType.Name);
+                if (structure == null || structure.Fields.All(f => !f.IsBuiltIn))
+                {
+                    context.Resources.Add(rd);
+                }
             }
         }
 
@@ -306,7 +332,7 @@ namespace ShaderGen
                 }
 
                 string invocationList = string.Join(", ", formattedParams);
-                string fullMethodName = CSharpToShaderType(function.Function.DeclaringType) + "_" + function.Function.Name.Replace(".", "0_");
+                string fullMethodName = CSharpToShaderType(function.Function.DeclaringType) + "_" + CorrectIdentifier(function.Function.Name).Replace(".", "0_");
                 return $"{fullMethodName}({invocationList})";
             }
 
@@ -320,18 +346,31 @@ namespace ShaderGen
 
         protected void ValidateRequiredSemantics(string setName, ShaderFunction function, ShaderFunctionType type)
         {
-            if (type == ShaderFunctionType.VertexEntryPoint)
+            StructureDefinition outputType = null;
+            if (function.ReturnType.TypeInfo.TypeKind == TypeKind.Struct &&
+                function.ReturnType.TypeInfo.SpecialType != SpecialType.System_Void &&
+                !ShaderPrimitiveTypes.IsPrimitiveType(function.ReturnType.TypeInfo.GetFullMetadataName()))
             {
-                StructureDefinition outputType = GetRequiredStructureType(setName, function.ReturnType);
-                foreach (FieldDefinition field in outputType.Fields)
+                outputType = GetRequiredStructureType(setName, function.ReturnType);
+            }
+            foreach (ParameterDefinition pd in function.Parameters)
+            {
+                GetRequiredStructureType(setName, pd.Type);
+            }
+            if (type == ShaderFunctionType.FragmentEntryPoint)
+            {
+                if (outputType != null)
                 {
-                    if (field.SemanticType == SemanticType.None)
+                    foreach (FieldDefinition field in outputType.Fields)
                     {
-                        throw new ShaderGenerationException("Function return type is missing semantics on field: " + field.Name);
+                        if (field.SemanticType == SemanticType.None)
+                        {
+                            throw new ShaderGenerationException("Function return type is missing semantics on field: " + field.Name);
+                        }
                     }
                 }
             }
-            if (type != ShaderFunctionType.Normal)
+            else if (type == ShaderFunctionType.VertexEntryPoint)
             {
                 foreach (ParameterDefinition pd in function.Parameters)
                 {
@@ -340,8 +379,8 @@ namespace ShaderGen
                     {
                         if (field.SemanticType == SemanticType.None)
                         {
-                            throw new ShaderGenerationException(
-                                $"Function parameter {pd.Name}'s type is missing semantics on field: {field.Name}");
+                            //throw new ShaderGenerationException(
+                            //    $"Function parameter {pd.Name}'s type is missing semantics on field: {field.Name}");
                         }
                     }
                 }
@@ -380,7 +419,7 @@ namespace ShaderGen
 
         private FieldDefinition ReflectField(IFieldSymbol field)
         {
-            int fixedSize = 1;
+            int fixedSize;
             AlignmentInfo fieldSizeAndAlignment;
             if (field.Type is IArrayTypeSymbol arrayType)
             {
@@ -395,6 +434,7 @@ namespace ShaderGen
             }
             else
             {
+                fixedSize = 0;
                 fieldSizeAndAlignment = TypeSizeCache.Get(field.Type);
             }
 
@@ -425,6 +465,12 @@ namespace ShaderGen
                     case nameof(TextureCoordinateSemanticAttribute):
                         semantic = SemanticType.TextureCoordinate;
                         break;
+                    case nameof(GeometrySemanticAttribute):
+                        var geometrySemantic = semanticAttribute.ConstructorArguments.First();
+                        return new FieldDefinition(field.Name,
+                            new TypeReference(field.Type.GetFullMetadataName(), field.Type, fixedSize),
+                            (GeometrySemantic)Enum.ToObject(typeof(GeometrySemantic), geometrySemantic.Value),
+                            fixedSize, fieldSizeAndAlignment);
                     default:
                         throw new NotSupportedException();
                 }
@@ -432,7 +478,7 @@ namespace ShaderGen
 
             return new FieldDefinition(field.Name,
                 new TypeReference(field.Type.GetFullMetadataName(), field.Type, fixedSize),
-                semantic, 0, fieldSizeAndAlignment);
+                semantic, fixedSize, fieldSizeAndAlignment);
         }
 
         private bool TryReflectStructure(string setName, ITypeSymbol name, out StructureDefinition sd)
@@ -440,7 +486,7 @@ namespace ShaderGen
             if (name.TypeKind == TypeKind.Struct)
             {
                 var fields = name.GetMembers().OfType<IFieldSymbol>().Select(ReflectField).ToArray();
-                sd = new StructureDefinition(name.GetFullMetadataName(), fields, TypeSizeCache.Get(name));
+                sd = new StructureDefinition(name, fields);
                 return true;
             }
             sd = null;
@@ -487,6 +533,10 @@ namespace ShaderGen
         protected abstract MethodProcessResult GenerateFullTextCore(string setName, ShaderFunction function);
         protected abstract string FormatInvocationCore(string setName, string type, string method, InvocationParameterInfo[] parameterInfos);
         internal abstract string GetComputeGroupCountsDeclaration(UInt3 groupCounts);
+        protected virtual string SemanticIdentifier(ShaderBuiltin builtin)
+        {
+            return null;
+        }
 
         internal string CorrectLiteral(string literal)
         {
@@ -529,6 +579,10 @@ namespace ShaderGen
                         resourcesUsed.Add(rd);
                     }
                     sb.AppendLine(processResult.FullText);
+                    foreach (var param in f.Function.Parameters)
+                    {
+                        resourcesUsed.Add(new ResourceDefinition(param.Name, 0, 0, param.Type, ShaderResourceKind.Local));
+                    }
                 }
             }
             funcs = sb.ToString();
@@ -537,6 +591,21 @@ namespace ShaderGen
             foreach (ResourceDefinition rd in result.ResourcesUsed)
             {
                 resourcesUsed.Add(rd);
+            }
+            var context = GetContext(setName);
+            foreach (var param in entryPoint.Function.Parameters)
+            {
+                var paramResource = new ResourceDefinition(param.Name, 0, 0, param.Type, ShaderResourceKind.Local);
+                resourcesUsed.Add(paramResource);
+                var sd = context.Structures.FirstOrDefault(paramResource.Matches);
+                if (sd != null)
+                {
+                    int fieldIndex = 0;
+                    foreach (var field in sd.Fields.Where(f => !f.IsBuiltIn))
+                    {
+                        resourcesUsed.Add(new ResourceDefinition(field.Name, 0, fieldIndex++, field.Type, ShaderResourceKind.Emit));
+                    }
+                }
             }
 
             entry = result.FullText;

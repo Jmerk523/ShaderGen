@@ -7,6 +7,13 @@
         public TypeReference ReturnType { get; }
         public int ColorOutputCount { get; } // TODO: This always returns 0.
         public ParameterDefinition[] Parameters { get; }
+        public StructureDefinition InputType { get; internal set; }
+        public StructureDefinition OutputType { get; internal set; }
+        public FieldDefinition[] InputFields { get; internal set; }
+        public FieldDefinition[] OutputFields { get; internal set; }
+        public PrimitiveType InputPrimitive { get; internal set; }
+        public PrimitiveType OutputPrimitive { get; internal set; }
+        public int MaxVertices { get; internal set; }
         public bool IsEntryPoint => Type != ShaderFunctionType.Normal;
         public ShaderFunctionType Type { get; }
         public UInt3 ComputeGroupCounts { get; }

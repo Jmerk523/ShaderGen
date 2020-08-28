@@ -2,34 +2,18 @@
 
 namespace ShaderGen
 {
-    public enum PrimitiveType
+    [AttributeUsage(AttributeTargets.Field)]
+    public sealed class EmitVertexAttribute : Attribute
     {
-        Points,
-        Lines,
-        LineStrip,
-        LineList,
-        LinesAdjacency,
-        LineStripAdjacency,
-        Triangles,
-        TriangleStrip,
-        TriangleFan,
-        TrianglesAdjacency,
-        TriangleStripAdjacency
     }
 
     public static class GeometryExtensions
     {
-        public static void EmitVertex<T>(T variable)
-        {
-            throw new ShaderBuiltinException();
-        }
+        public static void EmitVertex(object variable) => throw new ShaderBuiltinException();
 
-        public static void EndStreamPrimitive(int index)
-        {
-            throw new ShaderBuiltinException();
-        }
+        public static void EndStreamPrimitive(int index) => throw new ShaderBuiltinException();
 
-        public static void EmitStreamVertex<T>(int index, T variable) => EmitVertex(variable);
+        public static void EmitStreamVertex(int index, object variable) => EmitVertex(variable);
 
         public static void EndPrimitive() => EndStreamPrimitive(0);
 

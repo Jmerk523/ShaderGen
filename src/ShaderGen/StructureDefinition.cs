@@ -1,20 +1,24 @@
-﻿using System.Linq;
+﻿using System;
+using System.Linq;
+using Microsoft.CodeAnalysis;
 
 namespace ShaderGen
 {
     public class StructureDefinition
     {
+        public ITypeSymbol Type { get; }
         public string Name { get; }
         public FieldDefinition[] Fields { get; }
         public AlignmentInfo Alignment { get; }
         public bool CSharpMatchesShaderAlignment { get; }
 
-        public StructureDefinition(string name, FieldDefinition[] fields, AlignmentInfo size)
+        public StructureDefinition(ITypeSymbol type, FieldDefinition[] fields, AlignmentInfo? size = null)
         {
-            Name = name;
+            Type = type ?? throw new ArgumentNullException(nameof(type));
+            Name = type.GetFullMetadataName();
             Fields = fields;
-            Alignment = size;
-            if (size.CSharpSize == size.ShaderSize)
+            Alignment = size ?? TypeSizeCache.Get(type);
+            if (Alignment.CSharpSize == Alignment.ShaderSize)
             {
                 CSharpMatchesShaderAlignment = true;
             }
