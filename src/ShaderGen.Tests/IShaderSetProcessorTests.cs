@@ -16,7 +16,7 @@ namespace ShaderGen.Tests
             ShaderGenerator sg = new ShaderGenerator(
                 compilation,
                 backend,
-                "TestShaders.ProcessorTestShaders.VS", "TestShaders.ProcessorTestShaders.FS", null, processor);
+                "TestShaders.ProcessorTestShaders.VS", null, "TestShaders.ProcessorTestShaders.FS", null, processor);
             sg.GenerateShaders();
             Assert.Equal("This Sentence Should Be Printed By_Enumerating All Resources In Order", processor.Result);
         }
